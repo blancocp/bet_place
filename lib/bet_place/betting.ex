@@ -54,9 +54,13 @@ defmodule BetPlace.Betting do
 
     Ecto.Multi.new()
     |> Ecto.Multi.run(:check_event, fn _repo, _ ->
+      betting_closed =
+        not is_nil(event.betting_closes_at) and
+          DateTime.compare(event.betting_closes_at, now) != :gt
+
       cond do
         event.status != :open -> {:error, :event_not_open}
-        DateTime.compare(event.betting_closes_at, now) != :gt -> {:error, :betting_closed}
+        betting_closed -> {:error, :betting_closed}
         combination_count == 0 -> {:error, :no_selections}
         true -> {:ok, event}
       end

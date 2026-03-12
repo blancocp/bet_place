@@ -55,7 +55,7 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
                 <input
                   type="text"
                   name="name"
-                  value={@form[:name] && @form[:name].value}
+                  value={@name_value}
                   placeholder="Ej: Polla Aqueduct - 12 Mar"
                   class="input input-bordered"
                   required
@@ -135,6 +135,7 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
     {:ok,
      assign(socket,
        form: form,
+       name_value: "",
        game_types: Games.list_game_types(),
        courses: Racing.list_courses(),
        selected_game_type_id: nil,
@@ -146,6 +147,7 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
   def handle_event("select_options", params, socket) do
     course_id = presence(params["course_id"])
     game_type_id = presence(params["game_type_id"])
+    current_name = params["name"] || ""
 
     preview_races =
       if course_id do
@@ -154,11 +156,21 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
         []
       end
 
+    name_value =
+      if course_id && current_name == "" do
+        course = Enum.find(socket.assigns.courses, &(&1.id == course_id))
+        date = Date.utc_today() |> Calendar.strftime("%d/%m/%Y")
+        if course, do: "Polla Hípica - #{course.name} - #{date}", else: ""
+      else
+        current_name
+      end
+
     {:noreply,
      assign(socket,
        selected_course_id: course_id,
        selected_game_type_id: game_type_id,
-       preview_races: preview_races
+       preview_races: preview_races,
+       name_value: name_value
      )}
   end
 
