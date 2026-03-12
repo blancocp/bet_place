@@ -32,7 +32,9 @@ defmodule BetPlace.Betting do
     ordered_races = Enum.sort_by(event.game_event_races, & &1.race_order)
 
     ordered_selections =
-      Enum.map(ordered_races, fn ger -> Map.get(selections, ger.id, []) end)
+      Enum.map(ordered_races, fn ger ->
+        selections |> Map.get(ger.id, []) |> Enum.sort()
+      end)
 
     combinations = cartesian_product(ordered_selections)
     combination_count = length(combinations)

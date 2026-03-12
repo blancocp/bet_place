@@ -9,6 +9,8 @@ defmodule BetPlace.Api.SyncService do
   alias BetPlace.Api.{Client, Parser}
   alias BetPlace.Api.ApiSyncLog
   alias BetPlace.Racing
+  alias BetPlace.Games.GameEventRace
+  alias BetPlace.Betting.Settlement
   alias BetPlace.Repo
 
   import Ecto.Query
@@ -64,6 +66,7 @@ defmodule BetPlace.Api.SyncService do
             upsert_runner_with_associations(race.id, runner_data)
           end)
 
+          post_race_sync(race)
           {:ok, race}
         else
           {:error, reason} ->
@@ -129,6 +132,37 @@ defmodule BetPlace.Api.SyncService do
       {:error, reason} ->
         Logger.error("Failed upserting runner for race #{race_id}: #{inspect(reason)}")
     end
+  end
+
+  # Called after each race detail sync to trigger scoring, settlement, and non-runner handling.
+  defp post_race_sync(race) do
+    event_races =
+      GameEventRace
+      |> where([ger], ger.race_id == ^race.id)
+      |> Repo.all()
+
+    if race.canceled do
+      Enum.each(event_races, fn ger ->
+        if ger.status not in [:canceled, :finished] do
+          Settlement.handle_canceled_race(ger.id)
+        end
+      end)
+    end
+
+    if race.finished do
+      Enum.each(event_races, fn ger ->
+        if ger.status not in [:finished, :canceled] do
+          Settlement.score_race(ger.id)
+        end
+      end)
+    end
+
+    # Handle any new non-runners (idempotent check)
+    Racing.list_runners_for_race(race.id)
+    |> Enum.filter(& &1.non_runner)
+    |> Enum.each(fn runner ->
+      Settlement.handle_non_runner(race.id, runner.program_number)
+    end)
   end
 
   defp maybe_upsert_jockey(nil), do: {:ok, nil}
