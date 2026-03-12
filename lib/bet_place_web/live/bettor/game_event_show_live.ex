@@ -25,6 +25,8 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
         {ger, runners}
       end)
 
+    matchups = Betting.list_hvh_matchups_for_event(event.id)
+
     if connected?(socket) do
       Process.send_after(self(), :tick, @tick_interval)
       Phoenix.PubSub.subscribe(BetPlace.PubSub, "game_event:#{event.id}")
@@ -34,6 +36,8 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
      socket
      |> assign(:event, event)
      |> assign(:races_with_runners, races_with_runners)
+     |> assign(:matchups, matchups)
+     |> assign(:hvh_selections, %{})
      |> assign(:selections, %{})
      |> assign(:combination_count, 0)
      |> assign(:total_paid, Decimal.new("0.00"))
@@ -124,6 +128,69 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
          socket
          |> assign(:placing, false)
          |> put_flash(:error, "Error inesperado. Intenta de nuevo.")}
+    end
+  end
+
+  def handle_event("hvh_select_side", %{"matchup_id" => mid, "side" => side}, socket) do
+    side_atom = if side == "a", do: :a, else: :b
+    current = Map.get(socket.assigns.hvh_selections, mid, %{side: nil, amount: ""})
+
+    new_current =
+      if current.side == side_atom,
+        do: %{side: nil, amount: current.amount},
+        else: %{current | side: side_atom}
+
+    {:noreply,
+     assign(socket, :hvh_selections, Map.put(socket.assigns.hvh_selections, mid, new_current))}
+  end
+
+  def handle_event("hvh_set_amount", %{"matchup_id" => mid, "amount" => amount}, socket) do
+    current = Map.get(socket.assigns.hvh_selections, mid, %{side: nil, amount: ""})
+
+    {:noreply,
+     assign(
+       socket,
+       :hvh_selections,
+       Map.put(socket.assigns.hvh_selections, mid, %{current | amount: amount})
+     )}
+  end
+
+  def handle_event("place_hvh_bet", %{"matchup_id" => mid}, socket) do
+    %{hvh_selections: hvh_selections, matchups: matchups, current_scope: scope} = socket.assigns
+    sel = Map.get(hvh_selections, mid, %{})
+    matchup = Enum.find(matchups, &(to_string(&1.id) == mid))
+
+    with %{side: side, amount: amount_str} when not is_nil(side) <- sel,
+         {amount_dec, ""} <- Decimal.parse(amount_str),
+         true <- Decimal.compare(amount_dec, Decimal.new("0")) == :gt,
+         matchup when not is_nil(matchup) <- matchup do
+      # Preload game_event with config for place_hvh_bet
+      matchup_loaded = %{matchup | game_event: socket.assigns.event}
+
+      case Betting.place_hvh_bet(scope.user.id, matchup_loaded, side, amount_dec) do
+        {:ok, %{debit_user: updated_user}} ->
+          {:noreply,
+           socket
+           |> assign(:hvh_selections, Map.delete(hvh_selections, mid))
+           |> update(:current_scope, fn s -> %{s | user: updated_user} end)
+           |> put_flash(:info, "¡Apuesta HvH registrada!")}
+
+        {:error, :check_matchup, reason, _} ->
+          msg =
+            if reason == :matchup_not_open,
+              do: "Este enfrentamiento ya no está disponible.",
+              else: "Evento cerrado."
+
+          {:noreply, put_flash(socket, :error, msg)}
+
+        {:error, :check_balance, _, _} ->
+          {:noreply, put_flash(socket, :error, "Saldo insuficiente.")}
+
+        {:error, _, _, _} ->
+          {:noreply, put_flash(socket, :error, "Error inesperado.")}
+      end
+    else
+      _ -> {:noreply, put_flash(socket, :error, "Selecciona un lado y un monto válido.")}
     end
   end
 
@@ -255,6 +322,109 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <%!-- HvH Matchups --%>
+      <div :if={@matchups != []} class="mt-8">
+        <h2 class="text-xl font-bold mb-4">Horse vs Horse</h2>
+        <div class="grid gap-4">
+          <div
+            :for={matchup <- @matchups}
+            class="card bg-base-100 border border-base-200 shadow"
+          >
+            <div class="card-body p-4">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-bold text-sm text-base-content/70">
+                  {matchup.race.distance_raw || "—"}
+                </h3>
+                <span class={hvh_status_badge(matchup.status)}>
+                  {hvh_status_label(matchup.status)}
+                </span>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3 mb-3">
+                <%!-- Side A --%>
+                <button
+                  class={[
+                    "btn btn-outline h-auto py-3 flex-col gap-1",
+                    if(hvh_side_selected?(@hvh_selections, matchup.id, :a),
+                      do: "btn-primary",
+                      else: ""
+                    )
+                  ]}
+                  phx-click="hvh_select_side"
+                  phx-value-matchup_id={matchup.id}
+                  phx-value-side="a"
+                  disabled={matchup.status != :open}
+                >
+                  <span class="text-xs font-bold uppercase tracking-wider">Lado A</span>
+                  <span
+                    :for={side <- Enum.filter(matchup.hvh_matchup_sides, &(&1.side == :a))}
+                    class="text-sm font-normal"
+                  >
+                    {side.runner.horse.name}
+                  </span>
+                </button>
+
+                <%!-- Side B --%>
+                <button
+                  class={[
+                    "btn btn-outline h-auto py-3 flex-col gap-1",
+                    if(hvh_side_selected?(@hvh_selections, matchup.id, :b),
+                      do: "btn-secondary",
+                      else: ""
+                    )
+                  ]}
+                  phx-click="hvh_select_side"
+                  phx-value-matchup_id={matchup.id}
+                  phx-value-side="b"
+                  disabled={matchup.status != :open}
+                >
+                  <span class="text-xs font-bold uppercase tracking-wider">Lado B</span>
+                  <span
+                    :for={side <- Enum.filter(matchup.hvh_matchup_sides, &(&1.side == :b))}
+                    class="text-sm font-normal"
+                  >
+                    {side.runner.horse.name}
+                  </span>
+                </button>
+              </div>
+
+              <div
+                :if={hvh_any_side?(@hvh_selections, matchup.id)}
+                class="flex items-center gap-2"
+              >
+                <div class="flex-1">
+                  <input
+                    type="number"
+                    class="input input-bordered input-sm w-full"
+                    placeholder="Monto"
+                    min="1"
+                    value={hvh_amount(@hvh_selections, matchup.id)}
+                    phx-change="hvh_set_amount"
+                    phx-value-matchup_id={matchup.id}
+                    name="amount"
+                  />
+                </div>
+                <div class="text-xs text-base-content/60 shrink-0">
+                  × {format_decimal(@event.game_config.prize_multiplier || Decimal.new("1.80"))}
+                </div>
+                <button
+                  class="btn btn-sm btn-accent shrink-0"
+                  phx-click="place_hvh_bet"
+                  phx-value-matchup_id={matchup.id}
+                >
+                  Apostar
+                </button>
+              </div>
+
+              <div class="flex gap-4 mt-2 text-xs text-base-content/50">
+                <span>Lado A: ${format_decimal(matchup.total_side_a)}</span>
+                <span>Lado B: ${format_decimal(matchup.total_side_b)}</span>
               </div>
             </div>
           </div>
@@ -418,6 +588,31 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
 
   defp format_decimal(nil), do: "0.00"
   defp format_decimal(d), do: Decimal.round(d, 2) |> Decimal.to_string()
+
+  defp hvh_side_selected?(hvh_selections, matchup_id, side) do
+    hvh_selections |> Map.get(to_string(matchup_id), %{}) |> Map.get(:side) == side
+  end
+
+  defp hvh_any_side?(hvh_selections, matchup_id) do
+    hvh_selections |> Map.get(to_string(matchup_id), %{}) |> Map.get(:side) |> is_atom() and
+      not is_nil(hvh_selections |> Map.get(to_string(matchup_id), %{}) |> Map.get(:side))
+  end
+
+  defp hvh_amount(hvh_selections, matchup_id) do
+    hvh_selections |> Map.get(to_string(matchup_id), %{}) |> Map.get(:amount, "")
+  end
+
+  defp hvh_status_badge(:open), do: "badge badge-success badge-sm"
+  defp hvh_status_badge(:closed), do: "badge badge-warning badge-sm"
+  defp hvh_status_badge(:finished), do: "badge badge-neutral badge-sm"
+  defp hvh_status_badge(:void), do: "badge badge-error badge-sm"
+  defp hvh_status_badge(_), do: "badge badge-ghost badge-sm"
+
+  defp hvh_status_label(:open), do: "Abierto"
+  defp hvh_status_label(:closed), do: "Cerrado"
+  defp hvh_status_label(:finished), do: "Terminado"
+  defp hvh_status_label(:void), do: "Nulo"
+  defp hvh_status_label(_), do: "—"
 
   defp event_status_badge(:open), do: "badge badge-success"
   defp event_status_badge(:closed), do: "badge badge-warning"
