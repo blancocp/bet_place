@@ -13,6 +13,119 @@ defmodule BetPlace.Betting do
     HvhBet
   }
 
+  alias BetPlace.Accounts.User
+  alias BetPlace.Finance.Transaction
+  alias BetPlace.Games.GameEvent
+
+  # ── Place Polla Ticket (Ecto.Multi) ───────────────────────────────────────
+
+  @doc """
+  Places a polla ticket for a user on an open game event.
+
+  `game_event` must be preloaded with `:game_config` and `game_event_races`.
+  `selections` is a map of `%{game_event_race_id => [runner_id]}`.
+
+  Returns `{:ok, %{ticket: ticket, debit_user: user, ...}}` or
+  `{:error, failed_op, reason, changes}`.
+  """
+  def place_polla_ticket(user_id, %GameEvent{} = event, selections) do
+    ordered_races = Enum.sort_by(event.game_event_races, & &1.race_order)
+
+    ordered_selections =
+      Enum.map(ordered_races, fn ger -> Map.get(selections, ger.id, []) end)
+
+    combinations = cartesian_product(ordered_selections)
+    combination_count = length(combinations)
+    ticket_value = event.game_config.ticket_value || Decimal.new("1.00")
+    total_paid = Decimal.mult(Decimal.new(combination_count), ticket_value)
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    ticket_cs =
+      PollaTicket.changeset(%PollaTicket{}, %{
+        game_event_id: event.id,
+        user_id: user_id,
+        combination_count: combination_count,
+        ticket_value: ticket_value,
+        total_paid: total_paid,
+        sealed_at: now
+      })
+
+    Ecto.Multi.new()
+    |> Ecto.Multi.run(:check_event, fn _repo, _ ->
+      cond do
+        event.status != :open -> {:error, :event_not_open}
+        DateTime.compare(event.betting_closes_at, now) != :gt -> {:error, :betting_closed}
+        combination_count == 0 -> {:error, :no_selections}
+        true -> {:ok, event}
+      end
+    end)
+    |> Ecto.Multi.run(:check_balance, fn repo, _ ->
+      user = repo.get!(User, user_id)
+
+      if Decimal.compare(user.balance, total_paid) != :lt do
+        {:ok, user}
+      else
+        {:error, :insufficient_balance}
+      end
+    end)
+    |> Ecto.Multi.insert(:ticket, ticket_cs)
+    |> Ecto.Multi.insert_all(:selections, PollaSelection, fn %{ticket: ticket} ->
+      for ger <- ordered_races, runner_id <- Map.get(selections, ger.id, []) do
+        %{
+          polla_ticket_id: ticket.id,
+          game_event_race_id: ger.id,
+          runner_id: runner_id,
+          effective_runner_id: runner_id,
+          inserted_at: now
+        }
+      end
+    end)
+    |> Ecto.Multi.insert_all(:combinations, PollaCombination, fn %{ticket: ticket} ->
+      combinations
+      |> Enum.with_index(1)
+      |> Enum.map(fn {_combo, idx} ->
+        %{
+          polla_ticket_id: ticket.id,
+          combination_index: idx,
+          total_points: 0,
+          is_winner: false,
+          inserted_at: now,
+          updated_at: now
+        }
+      end)
+    end)
+    |> Ecto.Multi.update(:debit_user, fn %{check_balance: user} ->
+      User.balance_changeset(user, %{balance: Decimal.sub(user.balance, total_paid)})
+    end)
+    |> Ecto.Multi.insert(:transaction, fn %{check_balance: user, ticket: ticket} ->
+      Transaction.changeset(%Transaction{}, %{
+        user_id: user_id,
+        type: :bet,
+        direction: :debit,
+        amount: total_paid,
+        balance_before: user.balance,
+        balance_after: Decimal.sub(user.balance, total_paid),
+        reference_type: "polla_ticket",
+        reference_id: ticket.id,
+        status: :completed
+      })
+    end)
+    |> Ecto.Multi.run(:update_pool, fn repo, _ ->
+      event_fresh = repo.get!(GameEvent, event.id)
+      new_pool = Decimal.add(event_fresh.total_pool, total_paid)
+      event_fresh |> GameEvent.pool_changeset(%{total_pool: new_pool}) |> repo.update()
+    end)
+    |> Repo.transaction()
+  end
+
+  defp cartesian_product([]), do: [[]]
+
+  defp cartesian_product([runners | rest]) do
+    for runner_id <- runners, combo <- cartesian_product(rest) do
+      [runner_id | combo]
+    end
+  end
+
   # ── Polla Tickets ─────────────────────────────────────────────────────────
 
   def get_polla_ticket!(id) do
