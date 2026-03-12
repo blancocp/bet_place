@@ -9,7 +9,11 @@ import Config
 
 config :bet_place,
   ecto_repos: [BetPlace.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime, binary_id: true]
+
+config :bet_place, BetPlace.Repo,
+  migration_primary_key: [type: :binary_id],
+  migration_foreign_key: [type: :binary_id]
 
 # Configure the endpoint
 config :bet_place, BetPlaceWeb.Endpoint,
