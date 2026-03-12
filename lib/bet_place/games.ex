@@ -91,4 +91,46 @@ defmodule BetPlace.Games do
   def update_game_event_race_status(%GameEventRace{} = event_race, status) do
     event_race |> GameEventRace.status_changeset(status) |> Repo.update()
   end
+
+  # ── Game event creation with races (atomic) ───────────────────────────────
+
+  @doc """
+  Creates a game event and its 6 associated game_event_races in one transaction.
+  `races` is an ordered list of Race structs (race_order 1..N).
+  """
+  def create_game_event_with_races(attrs, races) when length(races) >= 1 do
+    betting_closes_at =
+      races
+      |> Enum.map(& &1.post_time)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.min(DateTime, fn -> nil end)
+
+    event_attrs = Map.merge(attrs, %{betting_closes_at: betting_closes_at, status: :open})
+
+    Ecto.Multi.new()
+    |> Ecto.Multi.insert(:game_event, GameEvent.changeset(%GameEvent{}, event_attrs))
+    |> Ecto.Multi.run(:game_event_races, fn repo, %{game_event: event} ->
+      Enum.with_index(races, 1)
+      |> Enum.each(fn {race, order} ->
+        repo.insert!(%GameEventRace{
+          game_event_id: event.id,
+          race_id: race.id,
+          race_order: order
+        })
+      end)
+
+      {:ok, length(races)}
+    end)
+    |> Repo.transaction()
+  end
+
+  # ── Stats ─────────────────────────────────────────────────────────────────
+
+  def count_game_events_by_status do
+    GameEvent
+    |> group_by([ge], ge.status)
+    |> select([ge], {ge.status, count(ge.id)})
+    |> Repo.all()
+    |> Map.new()
+  end
 end

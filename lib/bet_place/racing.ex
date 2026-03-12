@@ -143,6 +143,18 @@ defmodule BetPlace.Racing do
 
   # ── Runner Replacements ───────────────────────────────────────────────────
 
+  @doc "Returns the last N races for a course not yet canceled, ordered by post_time asc (soonest first)."
+  def list_last_races_for_game_event(course_id, limit \\ 6) do
+    Race
+    |> where([r], r.course_id == ^course_id and r.status != :canceled)
+    |> order_by([r], asc: r.post_time)
+    |> limit(^limit)
+    |> Repo.all()
+  end
+
+  def count_courses, do: Repo.aggregate(Course, :count)
+  def count_races, do: Repo.aggregate(Race, :count)
+
   def create_runner_replacement(attrs) do
     %RunnerReplacement{}
     |> RunnerReplacement.changeset(attrs)
