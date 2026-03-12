@@ -35,3 +35,11 @@ bet_place-*.tar
 npm-debug.log
 /assets/node_modules/
 
+# AI agent framework files (OpenClaw / Claude Code)
+/.openclaw/
+/HEARTBEAT.md
+/IDENTITY.md
+/SOUL.md
+/TOOLS.md
+/USER.md
+

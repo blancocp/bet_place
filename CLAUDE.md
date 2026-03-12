@@ -45,3 +45,40 @@ All guidelines in `AGENTS.md` apply. Key points:
 - Tailwind v4: never use `@apply` in raw CSS; no `tailwind.config.js`
 - No inline `<script>` tags; use colocated hooks (`:type={Phoenix.LiveView.ColocatedHook}`) with `.HookName` convention
 - Tests: use `has_element?/2`, `element/2` — never assert against raw HTML strings
+
+## Git Workflow
+
+### Branch strategy
+- `main` — production-ready code only; never commit directly
+- `development` — integration branch; merges come here first
+- Feature branches — short-lived, one ticket per branch
+
+### Ticket naming convention
+```
+dev-NNN-brief-description
+```
+Examples: `dev-001-uuid-config-migrations`, `dev-002-racing-context`
+
+Tickets are sequential (NNN = zero-padded 3-digit number).
+
+### Feature workflow (always follow this order)
+1. Create branch from `development`: `git checkout -b dev-NNN-description development`
+2. Implement the feature with small, focused commits
+3. Run `mix precommit` — fix all warnings/failures before pushing
+4. Push branch: `git push -u origin dev-NNN-description`
+5. Open PR targeting `development` (never `main` directly)
+6. After review/approval → merge to `development`
+7. Periodically, `development` is merged to `main` via PR after full QA
+
+### Commit message style
+```
+[dev-NNN] Short imperative description (50 chars max)
+
+Optional body explaining the why, not the what.
+```
+
+### Rules
+- Never push directly to `main` or `development`
+- Run `mix precommit` before every push
+- One logical change per branch — keep PRs small and reviewable
+- PR title mirrors the branch description: `[dev-NNN] Brief description`
