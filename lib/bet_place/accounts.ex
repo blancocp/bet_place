@@ -1,9 +1,9 @@
 defmodule BetPlace.Accounts do
-  @moduledoc "Context for user accounts and authentication."
+  @moduledoc "Context for user accounts, authentication, and session tokens."
 
   import Ecto.Query
   alias BetPlace.Repo
-  alias BetPlace.Accounts.User
+  alias BetPlace.Accounts.{User, UserToken, Scope}
 
   def list_users do
     Repo.all(User)
@@ -53,4 +53,31 @@ defmodule BetPlace.Accounts do
     |> where([u], u.status == :active)
     |> Repo.all()
   end
+
+  # ── Registration changeset (for LiveView forms) ───────────────────────────
+
+  def change_user_registration(%User{} = user, attrs \\ %{}) do
+    User.registration_changeset(user, attrs)
+  end
+
+  # ── Session tokens ────────────────────────────────────────────────────────
+
+  def create_user_session_token(user) do
+    {token, user_token} = UserToken.build_session_token(user)
+    Repo.insert!(user_token)
+    token
+  end
+
+  def get_user_by_session_token(token) do
+    Repo.one(UserToken.verify_session_token_query(token))
+  end
+
+  def delete_user_session_token(token) do
+    Repo.delete_all(UserToken.token_and_context_query(token, "session"))
+    :ok
+  end
+
+  # ── Scope ─────────────────────────────────────────────────────────────────
+
+  def build_scope(%User{} = user), do: Scope.for_user(user)
 end
