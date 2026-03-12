@@ -67,6 +67,11 @@ defmodule BetPlaceWeb.Router do
     live_session :admin,
       on_mount: [{BetPlaceWeb.UserAuth, :require_admin}] do
       live "/", DashboardLive
+      live "/eventos", GameEventListLive
+      live "/eventos/nuevo", GameEventNewLive
+      live "/eventos/:id", GameEventShowLive
+      live "/eventos/:event_id/matchups/nuevo", HvhMatchupNewLive
+      live "/usuarios", UserListLive
     end
   end
 

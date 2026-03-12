@@ -54,6 +54,20 @@ defmodule BetPlace.Accounts do
     |> Repo.all()
   end
 
+  def count_users, do: Repo.aggregate(User, :count)
+
+  def count_users_by_role do
+    User
+    |> group_by([u], u.role)
+    |> select([u], {u.role, count(u.id)})
+    |> Repo.all()
+    |> Map.new()
+  end
+
+  def update_user_status(%User{} = user, status) do
+    user |> User.update_changeset(%{status: status}) |> Repo.update()
+  end
+
   # ── Registration changeset (for LiveView forms) ───────────────────────────
 
   def change_user_registration(%User{} = user, attrs \\ %{}) do

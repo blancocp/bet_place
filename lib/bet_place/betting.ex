@@ -75,7 +75,7 @@ defmodule BetPlace.Betting do
   def list_hvh_matchups_for_event(game_event_id) do
     HvhMatchup
     |> where([m], m.game_event_id == ^game_event_id)
-    |> preload(hvh_matchup_sides: :runner)
+    |> preload(hvh_matchup_sides: [runner: :horse])
     |> Repo.all()
   end
 
@@ -113,4 +113,27 @@ defmodule BetPlace.Betting do
   def create_hvh_bet(attrs) do
     %HvhBet{} |> HvhBet.changeset(attrs) |> Repo.insert()
   end
+
+  @doc """
+  Creates an HvH matchup and its two sides in one transaction.
+  `side_a_runner_ids` and `side_b_runner_ids` are lists of runner UUIDs.
+  """
+  def create_hvh_matchup_with_sides(matchup_attrs, side_a_runner_ids, side_b_runner_ids) do
+    Ecto.Multi.new()
+    |> Ecto.Multi.insert(:matchup, HvhMatchup.changeset(%HvhMatchup{}, matchup_attrs))
+    |> Ecto.Multi.run(:sides, fn repo, %{matchup: matchup} ->
+      Enum.each(side_a_runner_ids, fn runner_id ->
+        repo.insert!(%HvhMatchupSide{hvh_matchup_id: matchup.id, side: :a, runner_id: runner_id})
+      end)
+
+      Enum.each(side_b_runner_ids, fn runner_id ->
+        repo.insert!(%HvhMatchupSide{hvh_matchup_id: matchup.id, side: :b, runner_id: runner_id})
+      end)
+
+      {:ok, :ok}
+    end)
+    |> Repo.transaction()
+  end
+
+  def count_tickets, do: Repo.aggregate(HvhBet, :count)
 end
