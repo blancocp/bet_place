@@ -58,6 +58,7 @@ defmodule BetPlaceWeb.Router do
       on_mount: [{BetPlaceWeb.UserAuth, :require_authenticated_user}] do
       live "/eventos", Bettor.GameEventListLive
       live "/eventos/:id", Bettor.GameEventShowLive
+      live "/mis-tickets", Bettor.MyTicketsLive
     end
   end
 

@@ -152,7 +152,7 @@ defmodule BetPlace.Betting do
     PollaTicket
     |> where([pt], pt.user_id == ^user_id)
     |> order_by([pt], desc: pt.inserted_at)
-    |> preload(:game_event)
+    |> preload([:game_event, :polla_combinations])
     |> Repo.all()
   end
 
@@ -204,6 +204,85 @@ defmodule BetPlace.Betting do
 
   def create_hvh_matchup_side(attrs) do
     %HvhMatchupSide{} |> HvhMatchupSide.changeset(attrs) |> Repo.insert()
+  end
+
+  # ── Place HvH Bet (Ecto.Multi) ────────────────────────────────────────────
+
+  @doc """
+  Places an HvH bet for a user.
+
+  `matchup` must be preloaded with `:game_event` and `:game_event` with `:game_config`.
+  `side` is `:a` or `:b`.
+  `amount` is a Decimal (already validated as > 0).
+  """
+  def place_hvh_bet(user_id, %HvhMatchup{} = matchup, side, amount) do
+    prize_multiplier =
+      matchup.game_event.game_config.prize_multiplier || Decimal.new("1.80")
+
+    potential_payout = Decimal.mult(amount, prize_multiplier)
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    bet_cs =
+      HvhBet.changeset(%HvhBet{}, %{
+        hvh_matchup_id: matchup.id,
+        user_id: user_id,
+        side_chosen: side,
+        amount: amount,
+        potential_payout: potential_payout,
+        placed_at: now
+      })
+
+    Ecto.Multi.new()
+    |> Ecto.Multi.run(:check_matchup, fn _repo, _ ->
+      cond do
+        matchup.status != :open -> {:error, :matchup_not_open}
+        matchup.game_event.status != :open -> {:error, :event_not_open}
+        true -> {:ok, matchup}
+      end
+    end)
+    |> Ecto.Multi.run(:check_balance, fn repo, _ ->
+      user = repo.get!(User, user_id)
+
+      if Decimal.compare(user.balance, amount) != :lt do
+        {:ok, user}
+      else
+        {:error, :insufficient_balance}
+      end
+    end)
+    |> Ecto.Multi.insert(:bet, bet_cs)
+    |> Ecto.Multi.update(:debit_user, fn %{check_balance: user} ->
+      User.balance_changeset(user, %{balance: Decimal.sub(user.balance, amount)})
+    end)
+    |> Ecto.Multi.insert(:transaction, fn %{check_balance: user, bet: bet} ->
+      Transaction.changeset(%Transaction{}, %{
+        user_id: user_id,
+        type: :bet,
+        direction: :debit,
+        amount: amount,
+        balance_before: user.balance,
+        balance_after: Decimal.sub(user.balance, amount),
+        reference_type: "hvh_bet",
+        reference_id: bet.id,
+        status: :completed
+      })
+    end)
+    |> Ecto.Multi.run(:update_matchup, fn repo, _ ->
+      fresh = repo.get!(HvhMatchup, matchup.id)
+
+      {new_a, new_b} =
+        if side == :a,
+          do: {Decimal.add(fresh.total_side_a, amount), fresh.total_side_b},
+          else: {fresh.total_side_a, Decimal.add(fresh.total_side_b, amount)}
+
+      fresh
+      |> HvhMatchup.result_changeset(%{
+        total_side_a: new_a,
+        total_side_b: new_b,
+        total_pool: Decimal.add(fresh.total_pool, amount)
+      })
+      |> repo.update()
+    end)
+    |> Repo.transaction()
   end
 
   # ── HvH Bets ──────────────────────────────────────────────────────────────
