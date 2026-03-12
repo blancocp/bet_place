@@ -197,7 +197,7 @@ defmodule BetPlace.Api.SyncService do
       status: status,
       response_hash: hash,
       error_message: error_message,
-      synced_at: DateTime.utc_now()
+      synced_at: DateTime.utc_now() |> DateTime.truncate(:second)
     })
   end
 
