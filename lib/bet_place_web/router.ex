@@ -1,6 +1,8 @@
 defmodule BetPlaceWeb.Router do
   use BetPlaceWeb, :router
 
+  import BetPlaceWeb.UserAuth
+
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
@@ -8,30 +10,68 @@ defmodule BetPlaceWeb.Router do
     plug :put_root_layout, html: {BetPlaceWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug :fetch_current_scope
   end
 
   pipeline :api do
     plug :accepts, ["json"]
   end
 
+  pipeline :require_auth do
+    plug :require_authenticated_user
+  end
+
+  pipeline :require_admin_role do
+    plug :require_admin
+  end
+
+  # ── Guest-only routes (redirect if already logged in) ─────────────────────
+  scope "/", BetPlaceWeb do
+    pipe_through [:browser, :redirect_if_authenticated]
+
+    live_session :redirect_if_authenticated,
+      on_mount: [{BetPlaceWeb.UserAuth, :mount_current_scope}] do
+      live "/login", UserLoginLive, :new
+      live "/register", UserRegistrationLive, :new
+    end
+
+    post "/login", UserSessionController, :create
+  end
+
+  # ── Public routes (logged in or not) ─────────────────────────────────────
   scope "/", BetPlaceWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    delete "/logout", UserSessionController, :delete
+
+    live_session :current_user,
+      on_mount: [{BetPlaceWeb.UserAuth, :mount_current_scope}] do
+      live "/", HomeLive
+    end
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", BetPlaceWeb do
-  #   pipe_through :api
-  # end
+  # ── Authenticated bettor routes ───────────────────────────────────────────
+  scope "/", BetPlaceWeb do
+    pipe_through [:browser, :require_auth]
 
-  # Enable LiveDashboard and Swoosh mailbox preview in development
+    live_session :authenticated,
+      on_mount: [{BetPlaceWeb.UserAuth, :require_authenticated_user}] do
+      live "/eventos", Bettor.GameEventListLive
+    end
+  end
+
+  # ── Admin routes ──────────────────────────────────────────────────────────
+  scope "/admin", BetPlaceWeb.Admin do
+    pipe_through [:browser, :require_admin_role]
+
+    live_session :admin,
+      on_mount: [{BetPlaceWeb.UserAuth, :require_admin}] do
+      live "/", DashboardLive
+    end
+  end
+
+  # ── Dev tools ─────────────────────────────────────────────────────────────
   if Application.compile_env(:bet_place, :dev_routes) do
-    # If you want to use the LiveDashboard in production, you should put
-    # it behind authentication and allow only admins to access it.
-    # If your application does not have an admins-only section yet,
-    # you can use Plug.BasicAuth to set up some basic authentication
-    # as long as you are also using SSL (which you should anyway).
     import Phoenix.LiveDashboard.Router
 
     scope "/dev" do
