@@ -1,5 +1,10 @@
 import Config
 
+# Horse Racing API key — set RACING_API_KEY env variable before starting the server.
+# In dev: add to your shell profile or use a .env loader.
+# In prod: set as a system environment variable or secret.
+config :bet_place, :racing_api_key, System.get_env("RACING_API_KEY")
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration

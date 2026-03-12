@@ -12,8 +12,7 @@ defmodule BetPlace.Application do
       BetPlace.Repo,
       {DNSCluster, query: Application.get_env(:bet_place, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: BetPlace.PubSub},
-      # Start a worker by calling: BetPlace.Worker.start_link(arg)
-      # {BetPlace.Worker, arg},
+      BetPlace.Api.SyncWorker,
       # Start to serve requests, typically the last entry
       BetPlaceWeb.Endpoint
     ]
