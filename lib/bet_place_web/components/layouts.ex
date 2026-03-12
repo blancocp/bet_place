@@ -35,35 +35,49 @@ defmodule BetPlaceWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
+    <header class="navbar bg-base-100 border-b border-base-200 px-4 sm:px-6 lg:px-8 sticky top-0 z-50">
       <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
-        </a>
+        <.link navigate={~p"/"} class="flex items-center gap-2 font-bold text-lg">
+          🐎 Bet Place
+        </.link>
       </div>
-      <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
-          </li>
-          <li>
-            <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost">GitHub</a>
-          </li>
-          <li>
-            <.theme_toggle />
-          </li>
-          <li>
-            <a href="https://hexdocs.pm/phoenix/overview.html" class="btn btn-primary">
-              Get Started <span aria-hidden="true">&rarr;</span>
-            </a>
-          </li>
-        </ul>
+      <div class="flex-none gap-2">
+        <%= if @current_scope do %>
+          <%= if BetPlace.Accounts.Scope.admin?(@current_scope) do %>
+            <.link navigate={~p"/admin"} class="btn btn-ghost btn-sm">
+              Admin
+            </.link>
+          <% end %>
+          <.link navigate={~p"/eventos"} class="btn btn-ghost btn-sm">
+            Eventos
+          </.link>
+          <div class="dropdown dropdown-end">
+            <div tabindex="0" role="button" class="btn btn-ghost btn-sm gap-1">
+              <.icon name="hero-user-circle" class="size-5" />
+              {@current_scope.user.username}
+            </div>
+            <ul
+              tabindex="0"
+              class="dropdown-content menu bg-base-100 rounded-box z-10 w-48 p-2 shadow border border-base-200"
+            >
+              <li class="menu-title text-xs">{@current_scope.user.email}</li>
+              <li>
+                <.link href={~p"/logout"} method="delete" class="text-error">
+                  <.icon name="hero-arrow-right-on-rectangle" class="size-4" /> Cerrar sesión
+                </.link>
+              </li>
+            </ul>
+          </div>
+        <% else %>
+          <.link navigate={~p"/login"} class="btn btn-ghost btn-sm">Ingresar</.link>
+          <.link navigate={~p"/register"} class="btn btn-primary btn-sm">Registrarse</.link>
+        <% end %>
+        <.theme_toggle />
       </div>
     </header>
 
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
+    <main class="px-4 py-8 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-5xl">
         {render_slot(@inner_block)}
       </div>
     </main>
