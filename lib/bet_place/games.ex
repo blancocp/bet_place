@@ -103,7 +103,14 @@ defmodule BetPlace.Games do
       races
       |> Enum.map(& &1.post_time)
       |> Enum.reject(&is_nil/1)
-      |> Enum.min(DateTime, fn -> nil end)
+      |> Enum.min(DateTime, fn ->
+        # Fallback: primera race_date disponible a las 23:59 UTC
+        races
+        |> Enum.map(& &1.race_date)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.min(Date, fn -> Date.utc_today() end)
+        |> DateTime.new!(~T[23:59:00], "Etc/UTC")
+      end)
 
     event_attrs = Map.merge(attrs, %{betting_closes_at: betting_closes_at, status: :open})
 
