@@ -303,8 +303,8 @@ defmodule BetPlace.Betting do
   def list_hvh_bets_for_user(user_id) do
     HvhBet
     |> where([b], b.user_id == ^user_id)
-    |> order_by([b], desc: b.inserted_at)
-    |> preload(hvh_matchup: :race)
+    |> order_by([b], desc: b.placed_at)
+    |> preload(hvh_matchup: [:race, :game_event])
     |> Repo.all()
   end
 
@@ -334,4 +334,37 @@ defmodule BetPlace.Betting do
   end
 
   def count_tickets, do: Repo.aggregate(HvhBet, :count)
+
+  # ── Admin listing ─────────────────────────────────────────────────────────
+
+  def list_polla_tickets_for_user_and_event(user_id, event_id) do
+    PollaTicket
+    |> where([pt], pt.user_id == ^user_id and pt.game_event_id == ^event_id)
+    |> order_by([pt], desc: pt.inserted_at)
+    |> preload(polla_selections: [game_event_race: :race, runner: [:horse]])
+    |> Repo.all()
+  end
+
+  def list_hvh_bets_for_user_and_event(user_id, event_id) do
+    HvhBet
+    |> join(:inner, [b], m in assoc(b, :hvh_matchup))
+    |> where([b, m], b.user_id == ^user_id and m.game_event_id == ^event_id)
+    |> order_by([b], desc: b.placed_at)
+    |> preload(hvh_matchup: [:race, hvh_matchup_sides: [runner: [:horse]]])
+    |> Repo.all()
+  end
+
+  def list_all_polla_tickets do
+    PollaTicket
+    |> order_by([pt], desc: pt.inserted_at)
+    |> preload([:user, :game_event])
+    |> Repo.all()
+  end
+
+  def list_all_hvh_bets do
+    HvhBet
+    |> order_by([b], desc: b.placed_at)
+    |> preload([:user, hvh_matchup: [:game_event, race: [:course]]])
+    |> Repo.all()
+  end
 end

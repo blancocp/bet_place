@@ -32,7 +32,12 @@ defmodule BetPlaceWeb.Bettor.MyTicketsLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
       <div>
-        <h1 class="text-2xl font-bold mb-6">Mis apuestas</h1>
+        <div class="flex items-center justify-between mb-6">
+          <h1 class="text-2xl font-bold">Mis apuestas</h1>
+          <.link navigate={~p"/historial"} class="btn btn-outline btn-sm gap-1">
+            <.icon name="hero-clock" class="size-4" /> Ver historial completo
+          </.link>
+        </div>
 
         <%!-- Polla tickets --%>
         <section class="mb-10">
