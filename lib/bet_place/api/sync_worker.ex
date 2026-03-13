@@ -10,7 +10,7 @@ defmodule BetPlace.Api.SyncWorker do
   use GenServer
   require Logger
 
-  alias BetPlace.Api.SyncService
+  alias BetPlace.Api.{SyncService, SyncSettings}
 
   @racecards_interval :timer.minutes(30)
   @results_interval :timer.seconds(60)
@@ -49,15 +49,20 @@ defmodule BetPlace.Api.SyncWorker do
 
   @impl true
   def handle_info(:sync_racecards, state) do
-    today = Date.to_string(Date.utc_today())
-    SyncService.sync_racecards(today)
+    if SyncSettings.auto_sync_enabled?() do
+      today = Date.to_string(Date.utc_today())
+      SyncService.sync_racecards(today)
+    else
+      Logger.info("SyncWorker: auto-sync disabled — skipping scheduled racecards sync")
+    end
+
     schedule_racecards()
     {:noreply, state}
   end
 
   @impl true
   def handle_info(:poll_results, state) do
-    if within_race_hours?() do
+    if SyncSettings.auto_sync_enabled?() and within_race_hours?() do
       today = Date.to_string(Date.utc_today())
       SyncService.sync_results(today)
     end
