@@ -2,7 +2,7 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
   use BetPlaceWeb, :live_view
 
   alias BetPlace.{Accounts, Games, Racing}
-  alias BetPlace.Api.SyncWorker
+  alias BetPlace.Api.{SyncWorker, SyncSettings}
 
   def render(assigns) do
     ~H"""
@@ -13,13 +13,6 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
             <h1 class="text-3xl font-bold">Panel de Administración</h1>
             <p class="text-base-content/60 mt-1">Bienvenido, {@current_scope.user.username}</p>
           </div>
-          <button
-            phx-click="sync_now"
-            class="btn btn-outline btn-sm gap-2"
-            phx-disable-with="Sincronizando..."
-          >
-            <.icon name="hero-arrow-path" class="size-4" /> Sync API ahora
-          </button>
         </div>
 
         <%!-- Stats cards --%>
@@ -46,6 +39,73 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
             <div class="card-body p-4">
               <div class="text-3xl font-bold text-success">{@stats.open_events}</div>
               <div class="text-sm text-base-content/60">Eventos abiertos</div>
+            </div>
+          </div>
+        </div>
+
+        <%!-- API Sync control --%>
+        <div class="card bg-base-100 border border-base-200 shadow-sm mb-6">
+          <div class="card-body">
+            <h2 class="card-title text-lg">
+              <.icon name="hero-arrow-path" class="size-5" /> Control de API
+            </h2>
+            <p class="text-sm text-base-content/60 mb-4">
+              Plan gratuito: 50 requests/día. Desactiva el sync automático para conservar cuota.
+            </p>
+
+            <%!-- Auto-sync toggle --%>
+            <div class="flex items-center justify-between p-3 rounded-lg bg-base-200 mb-4">
+              <div>
+                <div class="font-medium text-sm">Sync automático</div>
+                <div class="text-xs text-base-content/60">
+                  Racecards cada 30 min · Resultados cada 60 s (12–23 UTC)
+                </div>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class={[
+                  "badge badge-sm",
+                  if(@auto_sync_enabled, do: "badge-success", else: "badge-error")
+                ]}>
+                  {if @auto_sync_enabled, do: "ACTIVO", else: "INACTIVO"}
+                </span>
+                <button
+                  phx-click="toggle_auto_sync"
+                  class={[
+                    "btn btn-sm",
+                    if(@auto_sync_enabled,
+                      do: "btn-error btn-outline",
+                      else: "btn-success btn-outline"
+                    )
+                  ]}
+                >
+                  {if @auto_sync_enabled, do: "Desactivar", else: "Activar"}
+                </button>
+              </div>
+            </div>
+
+            <%!-- Manual sync buttons --%>
+            <div class="flex flex-wrap gap-2">
+              <button
+                phx-click="sync_racecards"
+                class="btn btn-outline btn-sm gap-2"
+                phx-disable-with="Sincronizando..."
+              >
+                <.icon name="hero-calendar" class="size-4" /> Sync Racecards
+              </button>
+              <button
+                phx-click="sync_results"
+                class="btn btn-outline btn-sm gap-2"
+                phx-disable-with="Sincronizando..."
+              >
+                <.icon name="hero-flag" class="size-4" /> Sync Resultados
+              </button>
+              <button
+                phx-click="sync_all"
+                class="btn btn-primary btn-sm gap-2"
+                phx-disable-with="Sincronizando..."
+              >
+                <.icon name="hero-arrow-path" class="size-4" /> Sync Todo
+              </button>
             </div>
           </div>
         </div>
@@ -87,15 +147,48 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
 
   def mount(_params, _session, socket) do
     stats = load_stats()
-    {:ok, assign(socket, stats: stats)}
+    auto_sync_enabled = SyncSettings.auto_sync_enabled?()
+    {:ok, assign(socket, stats: stats, auto_sync_enabled: auto_sync_enabled)}
   end
 
-  def handle_event("sync_now", _params, socket) do
+  def handle_event("toggle_auto_sync", _params, socket) do
+    new_value = not socket.assigns.auto_sync_enabled
+
+    case SyncSettings.set_auto_sync(new_value) do
+      :ok ->
+        msg =
+          if new_value,
+            do: "Sync automático activado.",
+            else: "Sync automático desactivado. Los syncs manuales siguen disponibles."
+
+        {:noreply, socket |> assign(auto_sync_enabled: new_value) |> put_flash(:info, msg)}
+
+      {:error, _} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           "Error al guardar la configuración. Revisa los logs del servidor."
+         )}
+    end
+  end
+
+  def handle_event("sync_racecards", _params, socket) do
+    SyncWorker.sync_now(:racecards)
+
+    {:noreply, socket |> put_flash(:info, "Sync de racecards iniciado en segundo plano.")}
+  end
+
+  def handle_event("sync_results", _params, socket) do
+    SyncWorker.sync_now(:results)
+
+    {:noreply, socket |> put_flash(:info, "Sync de resultados iniciado en segundo plano.")}
+  end
+
+  def handle_event("sync_all", _params, socket) do
     SyncWorker.sync_now(:all)
 
-    {:noreply,
-     socket
-     |> put_flash(:info, "Sincronización iniciada en segundo plano.")}
+    {:noreply, socket |> put_flash(:info, "Sync completo iniciado en segundo plano.")}
   end
 
   defp load_stats do

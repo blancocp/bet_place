@@ -49,15 +49,10 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
               </div>
 
               <div class="form-control mt-4">
-                <label class="label">
-                  <span class="label-text font-medium">Nombre del evento</span>
-                </label>
-                <input
-                  type="text"
-                  name="name"
-                  value={@name_value}
+                <.input
+                  field={@form[:name]}
+                  label="Nombre del evento"
                   placeholder="Ej: Polla Aqueduct - 12 Mar"
-                  class="input input-bordered"
                   required
                 />
               </div>
@@ -135,7 +130,6 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
     {:ok,
      assign(socket,
        form: form,
-       name_value: "",
        game_types: Games.list_game_types(),
        courses: Racing.list_courses(),
        selected_game_type_id: nil,
@@ -156,7 +150,7 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
         []
       end
 
-    name_value =
+    suggested_name =
       if course_id && current_name == "" do
         course = Enum.find(socket.assigns.courses, &(&1.id == course_id))
         date = Date.utc_today() |> Calendar.strftime("%d/%m/%Y")
@@ -165,12 +159,19 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
         current_name
       end
 
+    form =
+      to_form(%{
+        "name" => suggested_name,
+        "game_type_id" => game_type_id || "",
+        "course_id" => course_id || ""
+      })
+
     {:noreply,
      assign(socket,
+       form: form,
        selected_course_id: course_id,
        selected_game_type_id: game_type_id,
-       preview_races: preview_races,
-       name_value: name_value
+       preview_races: preview_races
      )}
   end
 
