@@ -249,39 +249,32 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
-      <div class="pb-32">
-        <%!-- Header --%>
-        <div class="flex items-start justify-between gap-4 mb-6">
-          <div>
-            <h1 class="text-2xl font-bold">{@event.name}</h1>
-            <p class="text-base-content/60 mt-1">{@event.course.full_name}</p>
+      <div class="pb-28">
+        <%!-- Header compacto --%>
+        <div class="flex items-center justify-between gap-2 mb-2">
+          <div class="min-w-0">
+            <h1 class="text-xl font-bold leading-tight truncate">{@event.name}</h1>
+            <p class="text-xs text-base-content/60">{@event.course.full_name}</p>
           </div>
-          <div class="text-right shrink-0 flex flex-col items-end gap-2">
+          <div class="text-right shrink-0 flex items-center gap-3">
             <span class={event_status_badge(@event.status)}>{status_label(@event.status)}</span>
-            <div class="text-2xl font-mono font-bold tabular-nums">
-              {format_countdown(@time_remaining)}
+            <div>
+              <div class="text-lg font-mono font-bold tabular-nums leading-none">
+                {format_countdown(@time_remaining)}
+              </div>
+              <p class="text-xs text-base-content/50 text-right">hasta cerrar</p>
             </div>
-            <p class="text-xs text-base-content/50">hasta cerrar apuestas</p>
-            <button
-              phx-click="open_my_tickets"
-              class="btn btn-sm btn-outline gap-1 mt-1"
-            >
-              <.icon name="hero-ticket" class="size-4" /> Mis tickets
-              <span
-                :if={length(@my_polla_tickets) + length(@my_hvh_bets) > 0}
-                class="badge badge-sm badge-primary"
-              >
-                {length(@my_polla_tickets) + length(@my_hvh_bets)}
-              </span>
-            </button>
           </div>
         </div>
 
         <%!-- Game tabs --%>
-        <div role="tablist" class="tabs tabs-bordered mb-5">
+        <div role="tablist" class="tabs tabs-bordered mb-2">
           <button
             role="tab"
-            class={["tab", if(@selected_tab == :polla, do: "tab-active font-semibold", else: "")]}
+            class={[
+              "tab tab-sm",
+              if(@selected_tab == :polla, do: "tab-active font-semibold", else: "")
+            ]}
             phx-click="switch_game_tab"
             phx-value-tab="polla"
           >
@@ -290,32 +283,35 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
           <button
             :if={@matchups != []}
             role="tab"
-            class={["tab", if(@selected_tab == :hvh, do: "tab-active font-semibold", else: "")]}
+            class={["tab tab-sm", if(@selected_tab == :hvh, do: "tab-active font-semibold", else: "")]}
             phx-click="switch_game_tab"
             phx-value-tab="hvh"
           >
-            Horse vs Horse
-            <span class="badge badge-sm ml-1">{length(@matchups)}</span>
+            Horse vs Horse <span class="badge badge-sm ml-1">{length(@matchups)}</span>
           </button>
         </div>
 
         <%!-- ══ POLLA TAB ══ --%>
         <div :if={@selected_tab == :polla}>
           <%!-- Info strip --%>
-          <div class="flex flex-wrap gap-4 mb-4 text-sm text-base-content/60">
+          <div class="flex flex-wrap gap-3 mb-2 text-xs text-base-content/60">
             <span>
-              Ticket: <strong class="text-base-content">${format_decimal(@event.game_config.ticket_value)}</strong>
+              Ticket:
+              <strong class="text-base-content">
+                ${format_decimal(@event.game_config.ticket_value)}
+              </strong>
             </span>
             <span>
-              Máx/carrera: <strong class="text-base-content">{@event.game_config.max_horses_per_race || 3}</strong>
+              Máx/carrera:
+              <strong class="text-base-content">{@event.game_config.max_horses_per_race || 3}</strong>
             </span>
             <span>
               Bote: <strong class="text-base-content">${format_decimal(@event.total_pool)}</strong>
             </span>
           </div>
 
-          <%!-- Race pills navigation --%>
-          <div class="flex gap-2 flex-wrap mb-4">
+          <%!-- Race pills navigation + Mis tickets --%>
+          <div class="flex items-center gap-2 flex-wrap mb-3">
             <%= for {{event_race, runners}, idx} <- Enum.with_index(@races_with_runners) do %>
               <button
                 phx-click="select_race"
@@ -324,10 +320,11 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                   "btn btn-sm gap-1",
                   if(@selected_race == idx,
                     do: "btn-primary",
-                    else: if(race_complete?(@selections, event_race.id, runners),
-                      do: "btn-success btn-outline",
-                      else: "btn-ghost border border-base-300"
-                    )
+                    else:
+                      if(race_complete?(@selections, event_race.id, runners),
+                        do: "btn-success btn-outline",
+                        else: "btn-ghost border border-base-300"
+                      )
                   )
                 ]}
               >
@@ -335,13 +332,23 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                   :if={race_complete?(@selections, event_race.id, runners) and @selected_race != idx}
                   name="hero-check"
                   class="size-3"
-                />
-                C{event_race.race_order}
+                /> C{event_race.race_order}
                 <span class="text-xs opacity-70">
                   {selected_count(@selections, event_race.id)}
                 </span>
               </button>
             <% end %>
+            <div class="ml-auto">
+              <button phx-click="open_my_tickets" class="btn btn-sm btn-outline gap-1">
+                <.icon name="hero-ticket" class="size-4" /> Mis tickets
+                <span
+                  :if={length(@my_polla_tickets) + length(@my_hvh_bets) > 0}
+                  class="badge badge-sm badge-primary"
+                >
+                  {length(@my_polla_tickets) + length(@my_hvh_bets)}
+                </span>
+              </button>
+            </div>
           </div>
 
           <%!-- Active race card --%>
@@ -469,7 +476,10 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                   <button
                     class={[
                       "btn btn-outline h-auto py-3 flex-col gap-1",
-                      if(hvh_side_selected?(@hvh_selections, matchup.id, :a), do: "btn-primary", else: "")
+                      if(hvh_side_selected?(@hvh_selections, matchup.id, :a),
+                        do: "btn-primary",
+                        else: ""
+                      )
                     ]}
                     phx-click="hvh_select_side"
                     phx-value-matchup_id={matchup.id}
@@ -488,7 +498,10 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                   <button
                     class={[
                       "btn btn-outline h-auto py-3 flex-col gap-1",
-                      if(hvh_side_selected?(@hvh_selections, matchup.id, :b), do: "btn-secondary", else: "")
+                      if(hvh_side_selected?(@hvh_selections, matchup.id, :b),
+                        do: "btn-secondary",
+                        else: ""
+                      )
                     ]}
                     phx-click="hvh_select_side"
                     phx-value-matchup_id={matchup.id}
@@ -541,7 +554,10 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
       </div>
 
       <%!-- Bottom bar (solo Polla) --%>
-      <div :if={@selected_tab == :polla} class="fixed bottom-0 left-0 right-0 bg-base-100 border-t border-base-200 shadow-2xl z-10">
+      <div
+        :if={@selected_tab == :polla}
+        class="fixed bottom-0 left-0 right-0 bg-base-100 border-t border-base-200 shadow-2xl z-10"
+      >
         <div class="max-w-3xl mx-auto flex items-center justify-between gap-3 p-4">
           <div class="text-center">
             <div class="text-xs text-base-content/60">Combinaciones</div>
