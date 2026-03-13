@@ -41,7 +41,7 @@ All guidelines in `AGENTS.md` apply. Key points:
 - LiveView templates must start with `<Layouts.app flash={@flash} ...>`
 - Use `<.icon name="hero-x-mark">` for icons, never `Heroicons` module directly
 - Use `<.input>` component for all form inputs
-- Use LiveView streams for collections (never assign raw lists)
+- **LiveView streams**: use `stream/3` + `phx-update="stream"` for collections rendered as lists/tables in the DOM — they send only diffs to the client and support incremental `stream_insert/3` and `stream_delete/3` without full re-renders. Use `stream(socket, :name, list, reset: true)` when the full list must be replaced (e.g. after a filter). **Do NOT use streams** when the collection needs in-memory `Enum` operations before rendering (filtering, sorting, aggregation) — in those cases keep the full source as a plain assign (e.g. `@items_all`) and derive the filtered result into a separate assign; streams and in-memory filtering are incompatible.
 - Tailwind v4: never use `@apply` in raw CSS; no `tailwind.config.js`
 - No inline `<script>` tags; use colocated hooks (`:type={Phoenix.LiveView.ColocatedHook}`) with `.HookName` convention
 - Tests: use `has_element?/2`, `element/2` — never assert against raw HTML strings

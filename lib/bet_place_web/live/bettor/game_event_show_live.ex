@@ -32,6 +32,8 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
       Phoenix.PubSub.subscribe(BetPlace.PubSub, "game_event:#{event.id}")
     end
 
+    user_id = socket.assigns.current_scope.user.id
+
     {:ok,
      socket
      |> assign(:event, event)
@@ -44,7 +46,13 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
      |> assign(:can_submit, false)
      |> assign(:show_confirm, false)
      |> assign(:placing, false)
-     |> assign(:time_remaining, time_remaining(event.betting_closes_at))}
+     |> assign(:time_remaining, time_remaining(event.betting_closes_at))
+     |> assign(:show_my_tickets, false)
+     |> assign(
+       :my_polla_tickets,
+       Betting.list_polla_tickets_for_user_and_event(user_id, event.id)
+     )
+     |> assign(:my_hvh_bets, Betting.list_hvh_bets_for_user_and_event(user_id, event.id))}
   end
 
   # ── Events ────────────────────────────────────────────────────────────────
@@ -72,6 +80,14 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
      |> assign(:can_submit, can_submit)}
   end
 
+  def handle_event("open_my_tickets", _, socket) do
+    {:noreply, assign(socket, :show_my_tickets, true)}
+  end
+
+  def handle_event("close_my_tickets", _, socket) do
+    {:noreply, assign(socket, :show_my_tickets, false)}
+  end
+
   def handle_event("show_confirm", _, socket) do
     if socket.assigns.can_submit do
       {:noreply, assign(socket, :show_confirm, true)}
@@ -94,6 +110,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
     case Betting.place_polla_ticket(user_id, event, selections_map) do
       {:ok, %{ticket: ticket, debit_user: updated_user}} ->
         ticket_ref = String.slice(ticket.id, 0, 8)
+        user_id = updated_user.id
 
         {:noreply,
          socket
@@ -104,6 +121,10 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
          |> assign(:total_paid, Decimal.new("0.00"))
          |> assign(:can_submit, false)
          |> update(:current_scope, fn s -> %{s | user: updated_user} end)
+         |> assign(
+           :my_polla_tickets,
+           Betting.list_polla_tickets_for_user_and_event(user_id, socket.assigns.event.id)
+         )
          |> put_flash(:info, "¡Ticket #{ticket_ref} registrado con éxito!")}
 
       {:error, :check_event, reason, _} ->
@@ -169,10 +190,16 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
 
       case Betting.place_hvh_bet(scope.user.id, matchup_loaded, side, amount_dec) do
         {:ok, %{debit_user: updated_user}} ->
+          user_id = updated_user.id
+
           {:noreply,
            socket
            |> assign(:hvh_selections, Map.delete(hvh_selections, mid))
            |> update(:current_scope, fn s -> %{s | user: updated_user} end)
+           |> assign(
+             :my_hvh_bets,
+             Betting.list_hvh_bets_for_user_and_event(user_id, socket.assigns.event.id)
+           )
            |> put_flash(:info, "¡Apuesta HvH registrada!")}
 
         {:error, :check_matchup, reason, _} ->
@@ -219,12 +246,24 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
             <h1 class="text-2xl font-bold">{@event.name}</h1>
             <p class="text-base-content/60 mt-1">{@event.course.full_name}</p>
           </div>
-          <div class="text-right shrink-0">
+          <div class="text-right shrink-0 flex flex-col items-end gap-2">
             <span class={event_status_badge(@event.status)}>{status_label(@event.status)}</span>
-            <div class="mt-2 text-2xl font-mono font-bold tabular-nums">
+            <div class="text-2xl font-mono font-bold tabular-nums">
               {format_countdown(@time_remaining)}
             </div>
             <p class="text-xs text-base-content/50">hasta cerrar apuestas</p>
+            <button
+              phx-click="open_my_tickets"
+              class="btn btn-sm btn-outline gap-1 mt-1"
+            >
+              <.icon name="hero-ticket" class="size-4" /> Mis tickets
+              <span
+                :if={length(@my_polla_tickets) + length(@my_hvh_bets) > 0}
+                class="badge badge-sm badge-primary"
+              >
+                {length(@my_polla_tickets) + length(@my_hvh_bets)}
+              </span>
+            </button>
           </div>
         </div>
 
@@ -506,6 +545,137 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
         </div>
         <div class="modal-backdrop" phx-click="hide_confirm"></div>
       </div>
+      <%!-- Drawer overlay --%>
+      <div
+        :if={@show_my_tickets}
+        class="fixed inset-0 bg-black/50 z-20"
+        phx-click="close_my_tickets"
+      >
+      </div>
+
+      <%!-- Drawer panel --%>
+      <div
+        :if={@show_my_tickets}
+        class="fixed top-0 right-0 h-full w-full max-w-sm bg-base-100 shadow-2xl z-30 flex flex-col"
+      >
+        <%!-- Drawer header --%>
+        <div class="flex items-center justify-between p-4 border-b border-base-200">
+          <h2 class="font-bold text-lg">Mis tickets — {@event.name}</h2>
+          <button phx-click="close_my_tickets" class="btn btn-ghost btn-sm btn-circle">
+            <.icon name="hero-x-mark" class="size-5" />
+          </button>
+        </div>
+
+        <%!-- Drawer content --%>
+        <div class="flex-1 overflow-y-auto p-4 space-y-6">
+          <%!-- Polla tickets --%>
+          <div>
+            <h3 class="font-semibold text-sm text-base-content/60 uppercase tracking-wide mb-3">
+              La Polla Hípica ({length(@my_polla_tickets)})
+            </h3>
+
+            <div :if={@my_polla_tickets == []} class="text-sm text-base-content/40 text-center py-4">
+              Sin tickets en este evento.
+            </div>
+
+            <div class="space-y-3">
+              <div
+                :for={ticket <- @my_polla_tickets}
+                class="card bg-base-200 shadow-sm"
+              >
+                <div class="card-body p-3">
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="font-mono text-xs text-base-content/50">
+                      #{String.slice(ticket.id, 0, 8)}
+                    </span>
+                    <span class={ticket_badge(ticket.status)}>
+                      {ticket_label(ticket.status)}
+                    </span>
+                  </div>
+                  <div class="flex justify-between text-sm mb-2">
+                    <span class="text-base-content/60">{ticket.combination_count} combinaciones</span>
+                    <span class="font-medium">${format_decimal(ticket.total_paid)}</span>
+                  </div>
+                  <%!-- Selecciones por carrera --%>
+                  <div class="space-y-1">
+                    <div
+                      :for={
+                        sel <- Enum.sort_by(ticket.polla_selections, & &1.game_event_race.race_order)
+                      }
+                      class="flex items-center justify-between text-xs"
+                    >
+                      <span class="text-base-content/50">
+                        C{sel.game_event_race.race_order}
+                      </span>
+                      <span class={[
+                        "font-medium",
+                        if(sel.was_replaced, do: "line-through text-base-content/40", else: "")
+                      ]}>
+                        {sel.runner.horse.name}
+                      </span>
+                      <span :if={sel.points_earned > 0} class="text-success text-xs">
+                        +{sel.points_earned}pts
+                      </span>
+                    </div>
+                  </div>
+                  <div
+                    :if={ticket.total_points}
+                    class="flex justify-between text-xs mt-2 pt-2 border-t border-base-300"
+                  >
+                    <span class="text-base-content/60">Puntos totales</span>
+                    <span class="font-bold">{ticket.total_points}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <%!-- HvH bets --%>
+          <div :if={@matchups != []}>
+            <h3 class="font-semibold text-sm text-base-content/60 uppercase tracking-wide mb-3">
+              Horse vs Horse ({length(@my_hvh_bets)})
+            </h3>
+
+            <div :if={@my_hvh_bets == []} class="text-sm text-base-content/40 text-center py-4">
+              Sin apuestas HvH en este evento.
+            </div>
+
+            <div class="space-y-3">
+              <div
+                :for={bet <- @my_hvh_bets}
+                class="card bg-base-200 shadow-sm"
+              >
+                <div class="card-body p-3">
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs text-base-content/50">
+                      {bet.hvh_matchup.race.distance_raw || "—"}
+                    </span>
+                    <span class={hvh_bet_badge(bet.status)}>
+                      {hvh_bet_label(bet.status)}
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between text-sm">
+                    <span class={
+                      if bet.side_chosen == :a,
+                        do: "badge badge-primary badge-sm",
+                        else: "badge badge-secondary badge-sm"
+                    }>
+                      {if bet.side_chosen == :a, do: "Lado A", else: "Lado B"}
+                    </span>
+                    <span class="font-medium">${format_decimal(bet.amount)}</span>
+                    <span class="text-base-content/60 text-xs">
+                      → ${format_decimal(bet.potential_payout)}
+                    </span>
+                  </div>
+                  <div :if={bet.status == :won} class="text-success font-bold text-sm mt-1">
+                    Cobrado: ${format_decimal(bet.actual_payout)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </Layouts.app>
     """
   end
@@ -570,7 +740,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
     max(0, DateTime.diff(closes_at, DateTime.utc_now(), :second))
   end
 
-  defp format_countdown(nil), do: "--:--"
+  defp format_countdown(nil), do: "—"
 
   defp format_countdown(0), do: "Cerrado"
 
@@ -613,6 +783,32 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
   defp hvh_status_label(:finished), do: "Terminado"
   defp hvh_status_label(:void), do: "Nulo"
   defp hvh_status_label(_), do: "—"
+
+  defp ticket_badge(:active), do: "badge badge-info badge-sm"
+  defp ticket_badge(:winner), do: "badge badge-success badge-sm"
+  defp ticket_badge(:loser), do: "badge badge-neutral badge-sm"
+  defp ticket_badge(:refunded), do: "badge badge-warning badge-sm"
+  defp ticket_badge(_), do: "badge badge-ghost badge-sm"
+
+  defp ticket_label(:active), do: "Activo"
+  defp ticket_label(:winner), do: "Ganador"
+  defp ticket_label(:loser), do: "Perdedor"
+  defp ticket_label(:refunded), do: "Reembolsado"
+  defp ticket_label(_), do: "—"
+
+  defp hvh_bet_badge(:pending), do: "badge badge-info badge-sm"
+  defp hvh_bet_badge(:won), do: "badge badge-success badge-sm"
+  defp hvh_bet_badge(:lost), do: "badge badge-neutral badge-sm"
+  defp hvh_bet_badge(:void), do: "badge badge-warning badge-sm"
+  defp hvh_bet_badge(:refunded), do: "badge badge-warning badge-sm"
+  defp hvh_bet_badge(_), do: "badge badge-ghost badge-sm"
+
+  defp hvh_bet_label(:pending), do: "Pendiente"
+  defp hvh_bet_label(:won), do: "Ganado"
+  defp hvh_bet_label(:lost), do: "Perdido"
+  defp hvh_bet_label(:void), do: "Nulo"
+  defp hvh_bet_label(:refunded), do: "Reembolsado"
+  defp hvh_bet_label(_), do: "—"
 
   defp event_status_badge(:open), do: "badge badge-success"
   defp event_status_badge(:closed), do: "badge badge-warning"
