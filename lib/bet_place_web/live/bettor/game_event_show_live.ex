@@ -259,10 +259,10 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
           <div class="text-right shrink-0 flex items-center gap-3">
             <span class={event_status_badge(@event.status)}>{status_label(@event.status)}</span>
             <div>
-              <div class="text-lg font-mono font-bold tabular-nums leading-none">
+              <div class="text-lg font-mono font-bold tabular-nums leading-none text-warning">
                 {format_countdown(@time_remaining)}
               </div>
-              <p class="text-xs text-base-content/50 text-right">hasta cerrar</p>
+              <p class="text-xs text-warning/60 text-right">hasta cerrar</p>
             </div>
           </div>
         </div>
@@ -642,7 +642,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
       <%!-- Drawer panel --%>
       <div
         :if={@show_my_tickets}
-        class="fixed top-0 right-0 h-full w-full max-w-sm bg-base-100 shadow-2xl z-30 flex flex-col"
+        class="fixed top-0 right-0 h-full w-full max-w-sm bg-base-100 shadow-2xl z-30 flex flex-col pt-16"
       >
         <%!-- Drawer header --%>
         <div class="flex items-center justify-between p-4 border-b border-base-200">
@@ -652,11 +652,19 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
           </button>
         </div>
 
+        <%!-- Drawer balance --%>
+        <div class="flex items-center justify-between px-4 py-2 bg-base-200/60 border-b border-base-200">
+          <span class="text-xs text-base-content/50">Saldo disponible</span>
+          <span class="font-mono font-bold text-sm text-success">
+            ${format_decimal(@current_scope.user.balance)}
+          </span>
+        </div>
+
         <%!-- Drawer content --%>
         <div class="flex-1 overflow-y-auto p-4 space-y-6">
           <%!-- Polla tickets --%>
           <div>
-            <h3 class="font-semibold text-sm text-base-content/60 uppercase tracking-wide mb-3">
+            <h3 class="font-semibold text-sm text-base-content/60 uppercase tracking-wide pt-2 mb-3">
               La Polla Hípica ({length(@my_polla_tickets)})
             </h3>
 
