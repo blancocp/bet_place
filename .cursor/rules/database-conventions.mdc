@@ -1,0 +1,24 @@
+---
+description: Database conventions for BetPlace - UUIDs, decimals, Ecto patterns
+globs: "**/*.ex,**/*.exs,priv/repo/migrations/**"
+alwaysApply: false
+---
+
+# Database Conventions
+
+- **All primary keys**: UUID (`binary_id`), never auto-increment integers
+- **All foreign keys**: UUID (`binary_id`)
+- Always use `timestamps()` in every schema
+- **Monetary values**: `decimal` with precision 15, scale 2 — never `float`
+- Index every foreign key column and every `external_id` field
+- Enums: use `Ecto.Enum` or string columns
+- Every balance change MUST use `Ecto.Multi` for atomicity
+- Transactions table is an immutable ledger — never delete records
+- Fields set programmatically (e.g. `user_id`) must NOT be in `cast` calls
+- Always use `mix ecto.gen.migration name_with_underscores` — never create migration files manually
+
+# Scoring (La Polla)
+
+- 1st place = 5pts, 2nd = 3pts, 3rd = 1pt
+- Ties: both tied runners get the same points for their position
+- Prize: `prize_pool = total_pool * (1 - house_cut_pct)`, split equally among winners
