@@ -1,0 +1,36 @@
+---
+description: BetPlace domain naming conventions and key business concepts
+alwaysApply: true
+---
+
+# Domain Naming Conventions
+
+| Concept (ES) | Code name (EN) |
+|---|---|
+| Hipódromo | course |
+| Carrera | race |
+| Caballo | horse |
+| Jinete | jockey |
+| Entrenador | trainer |
+| Participante en carrera | runner |
+| Polla hípica | polla |
+| Ticket / boleto | ticket |
+| Combinación | combination |
+| Selección | selection |
+| Evento de juego | game_event |
+| Enfrentamiento HvH | matchup |
+| Apuesta | bet |
+| Retiro de caballo | non_runner / withdrawal |
+| Reemplazo | replacement |
+| Premio | prize |
+| Bote total | pool |
+| Retención casa | house_cut |
+
+# Project Contexts
+
+- `BetPlace.Racing` — courses, races, horses, jockeys, trainers, runners
+- `BetPlace.Games` — game_types, game_configs, game_events, game_event_races
+- `BetPlace.Betting` — polla tickets, selections, combinations, hvh matchups/bets
+- `BetPlace.Finance` — transactions (immutable ledger), balance management
+- `BetPlace.Accounts` — users, authentication, roles (admin/bettor)
+- `BetPlace.Api` — HTTP client, parser, sync_worker for horse racing API

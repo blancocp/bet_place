@@ -1,0 +1,18 @@
+---
+description: UI/UX rules - DaisyUI components, Tailwind v4, dark mode
+globs: "**/*.html.heex,**/*.ex"
+alwaysApply: false
+---
+
+# UI & DaisyUI
+
+- DaisyUI IS installed and actively used — use its classes: `btn`, `card`, `badge`, `modal`, `alert`, `steps`, `countdown`, `drawer`, `dropdown`, `menu`, etc.
+- Tailwind v4 via `@import "tailwindcss"` syntax — no `tailwind.config.js`
+- Dark mode: `data-theme=dark` / `data-theme=light` (two custom themes defined in app.css)
+- Never use `@apply` in raw CSS
+- All user-facing text in Spanish
+- Use `<.icon name="hero-x-mark">` for icons, never Heroicons module directly
+- Use `<.input>` component for all form inputs
+- Implement subtle micro-interactions, hover effects, smooth transitions
+- Countdown timer for `betting_closes_at` using `Process.send_after/3`
+- PubSub topics: `"game_event:{id}"` for race updates, `"user:{id}"` for balance/ticket updates

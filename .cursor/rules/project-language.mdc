@@ -1,0 +1,13 @@
+---
+description: Language rules for BetPlace - Spanish UI, English code, Spanish conversations
+alwaysApply: true
+---
+
+# Language Rules
+
+- **UI / User-facing text**: Spanish (labels, buttons, messages, placeholders, tooltips)
+- **Code, database, variable names, module names, function names**: English
+- **Conversations with Carlos**: Spanish
+- **Error messages in logs**: English
+- **Validation messages shown to users**: Spanish
+- Never show raw UUIDs or technical error details to end users
