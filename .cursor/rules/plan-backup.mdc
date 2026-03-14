@@ -1,0 +1,15 @@
+---
+description: Backup completed plans to docs/plans/ for version control
+alwaysApply: true
+---
+
+# Plan Backup
+
+When a plan from `.cursor/plans/` is fully completed (all todos marked as completed):
+
+1. Copy the plan file to `docs/plans/` using a clean filename derived from the plan name
+2. Strip the YAML frontmatter (todo statuses are no longer relevant once completed)
+3. Keep only the markdown content as implementation documentation
+4. Stage the backup file in the next commit
+
+This ensures implementation decisions and architecture docs are preserved in the repo.
