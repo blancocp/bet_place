@@ -25,8 +25,19 @@ defmodule BetPlace.Api.SyncWorker do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  def sync_now(type \\ :all) do
-    GenServer.cast(__MODULE__, {:sync, type})
+  def sync_now(type \\ :all)
+
+  def sync_now(type) when type in [:all, :racecards, :results] do
+    today = Date.to_string(Date.utc_today())
+    sync_now(type, today)
+  end
+
+  def sync_now(type, date) when is_binary(date) do
+    GenServer.cast(__MODULE__, {:sync, type, date})
+  end
+
+  def sync_event(game_event_id) do
+    GenServer.cast(__MODULE__, {:sync_event, game_event_id})
   end
 
   # ── GenServer callbacks ───────────────────────────────────────────────────
@@ -72,24 +83,27 @@ defmodule BetPlace.Api.SyncWorker do
   end
 
   @impl true
-  def handle_cast({:sync, :racecards}, state) do
-    today = Date.to_string(Date.utc_today())
-    SyncService.sync_racecards(today)
+  def handle_cast({:sync, :racecards, date}, state) do
+    SyncService.sync_racecards(date)
     {:noreply, state}
   end
 
   @impl true
-  def handle_cast({:sync, :results}, state) do
-    today = Date.to_string(Date.utc_today())
-    SyncService.sync_results(today)
+  def handle_cast({:sync, :results, date}, state) do
+    SyncService.sync_results(date)
     {:noreply, state}
   end
 
   @impl true
-  def handle_cast({:sync, :all}, state) do
-    today = Date.to_string(Date.utc_today())
-    SyncService.sync_racecards(today)
-    SyncService.sync_results(today)
+  def handle_cast({:sync, :all, date}, state) do
+    SyncService.sync_racecards(date)
+    SyncService.sync_results(date)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:sync_event, game_event_id}, state) do
+    SyncService.sync_event_results(game_event_id)
     {:noreply, state}
   end
 

@@ -50,7 +50,8 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
               <.icon name="hero-arrow-path" class="size-5" /> Control de API
             </h2>
             <p class="text-sm text-base-content/60 mb-4">
-              Plan gratuito: 50 requests/día. Desactiva el sync automático para conservar cuota.
+              Plan BASIC: cuota limitada. El sync global trae todos los hipódromos.
+              Usa "Sync carreras" en cada evento para sincronizar solo lo necesario.
             </p>
 
             <%!-- Auto-sync toggle --%>
@@ -84,7 +85,17 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
             </div>
 
             <%!-- Manual sync buttons --%>
-            <div class="flex flex-wrap gap-2">
+            <div class="flex flex-wrap items-end gap-3">
+              <div>
+                <label class="label text-xs pb-1">Fecha de sync</label>
+                <input
+                  type="date"
+                  name="sync_date"
+                  value={@sync_date}
+                  phx-change="set_sync_date"
+                  class="input input-bordered input-sm w-40"
+                />
+              </div>
               <button
                 phx-click="sync_racecards"
                 class="btn btn-outline btn-sm gap-2"
@@ -107,6 +118,9 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
                 <.icon name="hero-arrow-path" class="size-4" /> Sync Todo
               </button>
             </div>
+            <p class="text-xs text-base-content/40 mt-2">
+              Sync Resultados solo descarga detalles de carreras con eventos activos.
+            </p>
           </div>
         </div>
 
@@ -159,7 +173,18 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
   def mount(_params, _session, socket) do
     stats = load_stats()
     auto_sync_enabled = SyncSettings.auto_sync_enabled?()
-    {:ok, assign(socket, stats: stats, auto_sync_enabled: auto_sync_enabled)}
+    today = Date.to_string(Date.utc_today())
+
+    {:ok,
+     assign(socket,
+       stats: stats,
+       auto_sync_enabled: auto_sync_enabled,
+       sync_date: today
+     )}
+  end
+
+  def handle_event("set_sync_date", %{"sync_date" => date}, socket) do
+    {:noreply, assign(socket, :sync_date, date)}
   end
 
   def handle_event("toggle_auto_sync", _params, socket) do
@@ -185,21 +210,30 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
   end
 
   def handle_event("sync_racecards", _params, socket) do
-    SyncWorker.sync_now(:racecards)
+    date = socket.assigns.sync_date
+    SyncWorker.sync_now(:racecards, date)
 
-    {:noreply, socket |> put_flash(:info, "Sync de racecards iniciado en segundo plano.")}
+    {:noreply, socket |> put_flash(:info, "Sync de racecards para #{date} iniciado (1 request).")}
   end
 
   def handle_event("sync_results", _params, socket) do
-    SyncWorker.sync_now(:results)
+    date = socket.assigns.sync_date
+    SyncWorker.sync_now(:results, date)
 
-    {:noreply, socket |> put_flash(:info, "Sync de resultados iniciado en segundo plano.")}
+    {:noreply,
+     socket
+     |> put_flash(
+       :info,
+       "Sync de resultados para #{date} iniciado (solo cursos con eventos activos)."
+     )}
   end
 
   def handle_event("sync_all", _params, socket) do
-    SyncWorker.sync_now(:all)
+    date = socket.assigns.sync_date
+    SyncWorker.sync_now(:racecards, date)
+    SyncWorker.sync_now(:results, date)
 
-    {:noreply, socket |> put_flash(:info, "Sync completo iniciado en segundo plano.")}
+    {:noreply, socket |> put_flash(:info, "Sync completo para #{date} iniciado.")}
   end
 
   defp load_stats do
