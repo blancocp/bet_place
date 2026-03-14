@@ -116,6 +116,17 @@ defmodule BetPlace.Racing do
     Repo.get_by(Runner, race_id: race_id, program_number: program_number)
   end
 
+  def find_next_active_runner(race_id, program_number) do
+    runners =
+      Runner
+      |> where([r], r.race_id == ^race_id and r.non_runner != true)
+      |> order_by([r], r.program_number)
+      |> Repo.all()
+
+    after_current = Enum.find(runners, fn r -> r.program_number > program_number end)
+    after_current || List.first(runners)
+  end
+
   def list_runners_for_race(race_id) do
     Runner
     |> where([r], r.race_id == ^race_id)

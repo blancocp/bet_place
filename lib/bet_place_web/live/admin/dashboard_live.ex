@@ -112,7 +112,7 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
               <div>
                 <div class="font-medium text-sm">Sync automático</div>
                 <div class="text-xs text-base-content/60">
-                  Racecards cada 30 min · Resultados cada 10 min (12–23 UTC)
+                  Racecards cada 30 min · Resultados cada 10 min (solo 12–23 UTC)
                 </div>
               </div>
               <div class="flex items-center gap-3">

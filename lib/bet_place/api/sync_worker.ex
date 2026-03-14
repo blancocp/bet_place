@@ -60,11 +60,9 @@ defmodule BetPlace.Api.SyncWorker do
 
   @impl true
   def handle_info(:sync_racecards, state) do
-    if SyncSettings.auto_sync_enabled?() do
+    if SyncSettings.auto_sync_enabled?() and within_race_hours?() do
       today = Date.to_string(Date.utc_today())
       SyncService.sync_racecards(today)
-    else
-      Logger.info("SyncWorker: auto-sync disabled — skipping scheduled racecards sync")
     end
 
     schedule_racecards()
