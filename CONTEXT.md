@@ -24,13 +24,13 @@ dynamic variant) and **Horse vs Horse**.
 ## Tech Stack & Versions
 
 ```
-Elixir ~> 1.16
-Phoenix ~> 1.7
-Phoenix LiveView ~> 0.20
-Ecto ~> 3.11
+Elixir ~> 1.15
+Phoenix ~> 1.8.5
+Phoenix LiveView ~> 1.1.0
+Ecto ~> 3.13
 PostgreSQL 15+
-Tailwind CSS 3
-DaisyUI 4
+Tailwind CSS v4 (import syntax, no tailwind.config.js)
+DaisyUI (Tailwind v4 plugin via @plugin "../vendor/daisyui")
 ```
 
 ---

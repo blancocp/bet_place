@@ -1,0 +1,32 @@
+---
+description: Git branch strategy and commit conventions for BetPlace
+alwaysApply: true
+---
+
+# Git Workflow
+
+- `main` — production-ready, never commit directly
+- `development` — integration branch, merges come here first
+- Feature branches: `dev-NNN-brief-description` (from `development`)
+
+# Commit Style
+
+```
+[dev-NNN] Short imperative description (50 chars max)
+
+Optional body explaining the why, not the what.
+```
+
+# Feature Flow
+
+1. `git checkout -b dev-NNN-description development`
+2. Implement with small, focused commits
+3. Run `mix precommit` before pushing
+4. `git push -u origin dev-NNN-description`
+5. PR targets `development` (never `main`)
+
+# Rules
+
+- Never push directly to `main` or `development`
+- One logical change per branch — keep PRs small
+- Run `mix precommit` before every push
