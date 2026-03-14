@@ -4,7 +4,7 @@ defmodule BetPlace.Api.SyncWorker do
 
   Schedule:
   - Racecards: every 30 minutes
-  - Results: every 60 seconds (during race hours: 12:00–23:00 UTC)
+  - Results: every 10 minutes (during race hours: 12:00–23:00 UTC)
   """
 
   use GenServer
@@ -13,7 +13,7 @@ defmodule BetPlace.Api.SyncWorker do
   alias BetPlace.Api.{SyncService, SyncSettings}
 
   @racecards_interval :timer.minutes(30)
-  @results_interval :timer.seconds(60)
+  @results_interval :timer.minutes(10)
 
   # Race hours in UTC (12:00 to 23:00)
   @race_hour_start 12
@@ -49,7 +49,7 @@ defmodule BetPlace.Api.SyncWorker do
       schedule_results()
 
       Logger.info(
-        "SyncWorker started — racecards every 30min, results every 60s during race hours"
+        "SyncWorker started — racecards every 30min, results every 10min during race hours"
       )
     else
       Logger.warning("SyncWorker: RACING_API_KEY not set — sync disabled")

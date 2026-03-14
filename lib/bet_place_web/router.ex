@@ -76,6 +76,7 @@ defmodule BetPlaceWeb.Router do
       live "/eventos/:event_id/matchups/nuevo", HvhMatchupNewLive
       live "/usuarios", UserListLive
       live "/tickets", TicketsLive
+      live "/api-usage", ApiUsageLive
     end
   end
 
