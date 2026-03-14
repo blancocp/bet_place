@@ -186,8 +186,7 @@ defmodule BetPlace.Betting.Settlement do
 
     original = Racing.get_runner_by_race_and_program_number(race_id, original_program_number)
 
-    replacement =
-      Racing.get_runner_by_race_and_program_number(race_id, original_program_number + 1)
+    replacement = Racing.find_next_active_runner(race_id, original_program_number)
 
     cond do
       is_nil(original) ->

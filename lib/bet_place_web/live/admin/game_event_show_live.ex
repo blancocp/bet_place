@@ -2,6 +2,7 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
   use BetPlaceWeb, :live_view
 
   alias BetPlace.{Games, Betting}
+  alias BetPlace.Api.SyncWorker
 
   def render(assigns) do
     ~H"""
@@ -22,15 +23,27 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
               <span class="text-sm text-base-content/60">{@event.game_type.name}</span>
             </div>
           </div>
-          <%= if @event.status == :open do %>
-            <button
-              phx-click="close_event"
-              class="btn btn-warning btn-sm"
-              data-confirm="¿Cerrar apuestas para este evento?"
-            >
-              Cerrar apuestas
-            </button>
-          <% end %>
+          <div class="flex items-center gap-2">
+            <%= if @event.status in [:open, :closed] do %>
+              <button
+                phx-click="sync_event"
+                class={["btn btn-sm btn-outline gap-1", if(@syncing, do: "btn-disabled")]}
+                disabled={@syncing}
+              >
+                <.icon name="hero-arrow-path" class={["size-4", if(@syncing, do: "animate-spin")]} />
+                {if @syncing, do: "Sincronizando...", else: "Sync carreras"}
+              </button>
+            <% end %>
+            <%= if @event.status == :open do %>
+              <button
+                phx-click="close_event"
+                class="btn btn-warning btn-sm"
+                data-confirm="¿Cerrar apuestas para este evento?"
+              >
+                Cerrar apuestas
+              </button>
+            <% end %>
+          </div>
         </div>
 
         <%!-- Info cards --%>
@@ -154,10 +167,31 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
   def mount(%{"id" => id}, _session, socket) do
     event = Games.get_game_event!(id)
     event_races = Games.list_game_event_races(id)
-
     matchups = Betting.list_hvh_matchups_for_event(id)
 
-    {:ok, assign(socket, event: event, event_races: event_races, matchups: matchups)}
+    {:ok,
+     assign(socket,
+       event: event,
+       event_races: event_races,
+       matchups: matchups,
+       syncing: false
+     )}
+  end
+
+  def handle_event("sync_event", _params, socket) do
+    SyncWorker.sync_event(socket.assigns.event.id)
+
+    race_count = length(socket.assigns.event_races)
+    estimated = race_count * 7
+
+    {:noreply,
+     socket
+     |> assign(:syncing, true)
+     |> put_flash(
+       :info,
+       "Sincronizando #{race_count} carreras del evento (~#{estimated}s). " <>
+         "Recarga la página cuando termine."
+     )}
   end
 
   def handle_event("close_event", _params, socket) do
