@@ -61,6 +61,15 @@ defmodule BetPlaceWeb.Layouts do
               class="dropdown-content menu bg-base-100 rounded-box z-10 w-48 p-2 shadow border border-base-200"
             >
               <li class="menu-title text-xs">{@current_scope.user.email}</li>
+              <li class="px-3 py-2">
+                <div class="flex items-center justify-between gap-2 pointer-events-none">
+                  <span class="text-xs text-base-content/50">Saldo</span>
+                  <span class="font-mono font-bold text-sm text-success">
+                    ${Decimal.round(@current_scope.user.balance, 2) |> Decimal.to_string()}
+                  </span>
+                </div>
+              </li>
+              <div class="divider my-0"></div>
               <li>
                 <.link href={~p"/logout"} method="delete" class="text-error">
                   <.icon name="hero-arrow-right-on-rectangle" class="size-4" /> Cerrar sesión
