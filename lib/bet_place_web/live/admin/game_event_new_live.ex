@@ -98,7 +98,7 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
                 <div class="alert alert-warning mt-4">
                   <.icon name="hero-exclamation-triangle" class="size-5" />
                   <span>
-                    No hay carreras disponibles para este hipódromo. Ejecuta una sincronización primero.
+                    No hay carreras programadas para hoy en este hipódromo. Ejecuta una sincronización de racecards primero.
                   </span>
                 </div>
               <% end %>
@@ -153,8 +153,10 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
     suggested_name =
       if course_id && current_name == "" do
         course = Enum.find(socket.assigns.courses, &(&1.id == course_id))
+        game_type = Enum.find(socket.assigns.game_types, &(&1.id == game_type_id))
         date = Date.utc_today() |> Calendar.strftime("%d/%m/%Y")
-        if course, do: "Polla Hípica - #{course.name} - #{date}", else: ""
+        type_label = if game_type, do: game_type.name, else: "Evento"
+        if course, do: "#{type_label} - #{course.name} - #{date}", else: ""
       else
         current_name
       end
