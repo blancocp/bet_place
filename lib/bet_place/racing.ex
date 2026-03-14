@@ -154,10 +154,12 @@ defmodule BetPlace.Racing do
 
   # ── Runner Replacements ───────────────────────────────────────────────────
 
-  @doc "Returns the last N races for a course not yet canceled, ordered by post_time asc (soonest first)."
+  @doc "Returns today's scheduled/open races for a course, ordered by post_time asc."
   def list_last_races_for_game_event(course_id, limit \\ 6) do
+    today = Date.utc_today()
+
     Race
-    |> where([r], r.course_id == ^course_id and r.status in [:scheduled, :open])
+    |> where([r], r.course_id == ^course_id and r.race_date == ^today and r.status in [:scheduled, :open])
     |> order_by([r], asc: r.race_date, asc: r.post_time)
     |> limit(^limit)
     |> Repo.all()

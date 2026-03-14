@@ -14,6 +14,7 @@ defmodule BetPlace.Api.SyncService do
   alias BetPlace.Api.ApiSyncLog
   alias BetPlace.Racing
   alias BetPlace.Games.{GameEvent, GameEventRace}
+  alias BetPlace.Betting
   alias BetPlace.Betting.Settlement
   alias BetPlace.Repo
 
@@ -219,6 +220,10 @@ defmodule BetPlace.Api.SyncService do
           Settlement.score_race(ger.id)
         end
       end)
+
+      Betting.list_hvh_matchups_for_race(race.id)
+      |> Enum.filter(&(&1.status in [:open, :closed]))
+      |> Enum.each(&Settlement.resolve_hvh_matchup(&1.id))
     end
 
     # Handle any new non-runners (idempotent check)
@@ -226,6 +231,7 @@ defmodule BetPlace.Api.SyncService do
     |> Enum.filter(& &1.non_runner)
     |> Enum.each(fn runner ->
       Settlement.handle_non_runner(race.id, runner.program_number)
+      Settlement.void_hvh_for_non_runner(race.id, runner.id)
     end)
   end
 

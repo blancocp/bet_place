@@ -197,9 +197,16 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
   def handle_event("close_event", _params, socket) do
     case Games.update_game_event_status(socket.assigns.event, :closed) do
       {:ok, event} ->
+        closed_count = Betting.close_matchups_for_event(event.id)
+
+        msg =
+          if closed_count > 0,
+            do: "Apuestas cerradas. #{closed_count} matchup(s) HvH cerrado(s).",
+            else: "Apuestas cerradas."
+
         {:noreply,
          socket
-         |> put_flash(:info, "Apuestas cerradas.")
+         |> put_flash(:info, msg)
          |> assign(event: event)}
 
       {:error, _} ->

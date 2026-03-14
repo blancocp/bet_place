@@ -10,7 +10,7 @@ defmodule BetPlace.Betting.Settlement do
 
   alias BetPlace.Repo
   alias BetPlace.Games.{GameEvent, GameEventRace}
-  alias BetPlace.Betting.{PollaTicket, PollaSelection, PollaCombination}
+  alias BetPlace.Betting.{PollaTicket, PollaSelection, PollaCombination, HvhMatchup, HvhBet}
   alias BetPlace.Accounts.User
   alias BetPlace.Finance.Transaction
   alias BetPlace.Racing
@@ -242,16 +242,142 @@ defmodule BetPlace.Betting.Settlement do
     :ok
   end
 
+  # ── HvH Matchup Resolution ───────────────────────────────────────────────
+
+  @doc """
+  Resolves an HvH matchup after the race finishes.
+  Compares the best position (lowest) of each side within top 5.
+  """
+  def resolve_hvh_matchup(matchup_id) do
+    matchup =
+      HvhMatchup
+      |> preload(hvh_matchup_sides: :runner)
+      |> Repo.get!(matchup_id)
+
+    if matchup.status in [:finished, :void] do
+      Logger.info("Settlement HvH: matchup #{matchup_id} already resolved, skipping")
+      :ok
+    else
+      sides_a = Enum.filter(matchup.hvh_matchup_sides, &(&1.side == :a))
+      sides_b = Enum.filter(matchup.hvh_matchup_sides, &(&1.side == :b))
+
+      has_non_runner =
+        Enum.any?(matchup.hvh_matchup_sides, fn s -> s.runner && s.runner.non_runner end)
+
+      if has_non_runner do
+        void_hvh_matchup(matchup_id, "Non-runner in matchup")
+      else
+        best_a = best_top5_position(sides_a)
+        best_b = best_top5_position(sides_b)
+
+        cond do
+          is_nil(best_a) and is_nil(best_b) ->
+            void_hvh_matchup(matchup_id, "No runner finished in top 5")
+
+          is_nil(best_a) ->
+            settle_hvh_winner(matchup, :side_b)
+
+          is_nil(best_b) ->
+            settle_hvh_winner(matchup, :side_a)
+
+          best_a < best_b ->
+            settle_hvh_winner(matchup, :side_a)
+
+          best_b < best_a ->
+            settle_hvh_winner(matchup, :side_b)
+
+          true ->
+            void_hvh_matchup(matchup_id, "Tie in position")
+        end
+      end
+    end
+  end
+
+  @doc """
+  Voids an HvH matchup and refunds all pending bets.
+  """
+  def void_hvh_matchup(matchup_id, reason) do
+    Logger.info("Settlement HvH: voiding matchup #{matchup_id} — #{reason}")
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    matchup = Repo.get!(HvhMatchup, matchup_id)
+
+    matchup
+    |> HvhMatchup.result_changeset(%{
+      status: :void,
+      result_side: :void,
+      void_reason: reason,
+      resolved_at: now
+    })
+    |> Repo.update!()
+
+    bets =
+      HvhBet
+      |> where([b], b.hvh_matchup_id == ^matchup_id and b.status == :pending)
+      |> Repo.all()
+
+    Enum.each(bets, fn bet ->
+      refund_hvh_bet(bet)
+    end)
+
+    Phoenix.PubSub.broadcast(
+      BetPlace.PubSub,
+      "game_event:#{matchup.game_event_id}",
+      {:hvh_matchup_voided, matchup_id}
+    )
+
+    Logger.info("Settlement HvH: voided matchup #{matchup_id}, refunded #{length(bets)} bets")
+    :ok
+  end
+
+  @doc """
+  Voids all open HvH matchups that include a specific non-runner.
+  """
+  def void_hvh_for_non_runner(race_id, runner_id) do
+    matchup_ids =
+      from(ms in BetPlace.Betting.HvhMatchupSide,
+        join: m in HvhMatchup,
+        on: ms.hvh_matchup_id == m.id,
+        where:
+          ms.runner_id == ^runner_id and m.race_id == ^race_id and m.status in [:open, :closed],
+        select: m.id,
+        distinct: true
+      )
+      |> Repo.all()
+
+    Enum.each(matchup_ids, fn id ->
+      void_hvh_matchup(id, "Non-runner withdrawal")
+    end)
+  end
+
+  @doc """
+  Voids all open HvH matchups for a canceled race.
+  """
+  def void_hvh_for_canceled_race(race_id) do
+    matchup_ids =
+      HvhMatchup
+      |> where([m], m.race_id == ^race_id and m.status in [:open, :closed])
+      |> select([m], m.id)
+      |> Repo.all()
+
+    Enum.each(matchup_ids, fn id ->
+      void_hvh_matchup(id, "Race canceled")
+    end)
+  end
+
   # ── Canceled Race Handling ────────────────────────────────────────────────
 
   @doc """
   Handles a canceled race. Voids the whole game event and refunds all active polla tickets.
+  Also voids all HvH matchups for the canceled race.
   """
   def handle_canceled_race(game_event_race_id) do
     Logger.info("Settlement: canceled race for game_event_race #{game_event_race_id}")
 
     ger = Repo.get!(GameEventRace, game_event_race_id)
     ger |> GameEventRace.status_changeset(:canceled) |> Repo.update!()
+
+    void_hvh_for_canceled_race(ger.race_id)
 
     event = Repo.get!(GameEvent, ger.game_event_id)
 
@@ -384,6 +510,132 @@ defmodule BetPlace.Betting.Settlement do
     )
 
     Logger.info("Settlement: refunded #{length(tickets)} tickets for canceled event #{event.id}")
+  end
+
+  defp settle_hvh_winner(matchup, winning_side) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    matchup
+    |> HvhMatchup.result_changeset(%{
+      status: :finished,
+      result_side: winning_side,
+      resolved_at: now
+    })
+    |> Repo.update!()
+
+    winning_side_atom = if winning_side == :side_a, do: :a, else: :b
+
+    bets =
+      HvhBet
+      |> where([b], b.hvh_matchup_id == ^matchup.id and b.status == :pending)
+      |> Repo.all()
+
+    Enum.each(bets, fn bet ->
+      if bet.side_chosen == winning_side_atom do
+        pay_hvh_winner(bet)
+      else
+        bet
+        |> HvhBet.result_changeset(%{status: :lost, actual_payout: Decimal.new("0")})
+        |> Repo.update!()
+      end
+    end)
+
+    Phoenix.PubSub.broadcast(
+      BetPlace.PubSub,
+      "game_event:#{matchup.game_event_id}",
+      {:hvh_matchup_settled, matchup.id, winning_side}
+    )
+
+    Logger.info("Settlement HvH: matchup #{matchup.id} won by #{winning_side}")
+    :ok
+  end
+
+  defp pay_hvh_winner(bet) do
+    user = Repo.get!(User, bet.user_id)
+    payout = bet.potential_payout
+    new_balance = Decimal.add(user.balance, payout)
+
+    Ecto.Multi.new()
+    |> Ecto.Multi.update(
+      :bet,
+      HvhBet.result_changeset(bet, %{status: :won, actual_payout: payout})
+    )
+    |> Ecto.Multi.update(:credit_user, User.balance_changeset(user, %{balance: new_balance}))
+    |> Ecto.Multi.insert(
+      :transaction,
+      Transaction.changeset(%Transaction{}, %{
+        user_id: user.id,
+        type: :payout,
+        direction: :credit,
+        amount: payout,
+        balance_before: user.balance,
+        balance_after: new_balance,
+        reference_type: "hvh_bet",
+        reference_id: bet.id,
+        status: :completed
+      })
+    )
+    |> Repo.transaction()
+    |> case do
+      {:ok, _} ->
+        Phoenix.PubSub.broadcast(
+          BetPlace.PubSub,
+          "user:#{user.id}",
+          {:balance_updated, new_balance}
+        )
+
+      {:error, step, reason, _} ->
+        Logger.error(
+          "Settlement HvH: payout failed for bet #{bet.id} at #{step}: #{inspect(reason)}"
+        )
+    end
+  end
+
+  defp refund_hvh_bet(bet) do
+    user = Repo.get!(User, bet.user_id)
+    new_balance = Decimal.add(user.balance, bet.amount)
+
+    Ecto.Multi.new()
+    |> Ecto.Multi.update(
+      :bet,
+      HvhBet.result_changeset(bet, %{status: :refunded, actual_payout: Decimal.new("0")})
+    )
+    |> Ecto.Multi.update(:credit_user, User.balance_changeset(user, %{balance: new_balance}))
+    |> Ecto.Multi.insert(
+      :transaction,
+      Transaction.changeset(%Transaction{}, %{
+        user_id: user.id,
+        type: :refund,
+        direction: :credit,
+        amount: bet.amount,
+        balance_before: user.balance,
+        balance_after: new_balance,
+        reference_type: "hvh_bet",
+        reference_id: bet.id,
+        status: :completed
+      })
+    )
+    |> Repo.transaction()
+    |> case do
+      {:ok, _} ->
+        Phoenix.PubSub.broadcast(
+          BetPlace.PubSub,
+          "user:#{user.id}",
+          {:balance_updated, new_balance}
+        )
+
+      {:error, step, reason, _} ->
+        Logger.error(
+          "Settlement HvH: refund failed for bet #{bet.id} at #{step}: #{inspect(reason)}"
+        )
+    end
+  end
+
+  defp best_top5_position(sides) do
+    sides
+    |> Enum.map(fn s -> s.runner && s.runner.position end)
+    |> Enum.filter(fn pos -> is_integer(pos) and pos >= 1 and pos <= 5 end)
+    |> Enum.min(fn -> nil end)
   end
 
   defp already_replaced?(original_runner_id) do

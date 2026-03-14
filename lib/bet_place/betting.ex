@@ -198,6 +198,22 @@ defmodule BetPlace.Betting do
     |> Repo.all()
   end
 
+  def list_hvh_matchups_for_race(race_id) do
+    HvhMatchup
+    |> where([m], m.race_id == ^race_id)
+    |> preload(hvh_matchup_sides: :runner)
+    |> Repo.all()
+  end
+
+  def close_matchups_for_event(game_event_id) do
+    {count, _} =
+      HvhMatchup
+      |> where([m], m.game_event_id == ^game_event_id and m.status == :open)
+      |> Repo.update_all(set: [status: :closed])
+
+    count
+  end
+
   def create_hvh_matchup(attrs) do
     %HvhMatchup{} |> HvhMatchup.changeset(attrs) |> Repo.insert()
   end
@@ -242,6 +258,15 @@ defmodule BetPlace.Betting do
         matchup.status != :open -> {:error, :matchup_not_open}
         matchup.game_event.status != :open -> {:error, :event_not_open}
         true -> {:ok, matchup}
+      end
+    end)
+    |> Ecto.Multi.run(:check_min_stake, fn _repo, _ ->
+      min = matchup.game_event.game_config.min_stake || Decimal.new("0")
+
+      if Decimal.compare(amount, min) != :lt do
+        {:ok, amount}
+      else
+        {:error, :below_min_stake}
       end
     end)
     |> Ecto.Multi.run(:check_balance, fn repo, _ ->
