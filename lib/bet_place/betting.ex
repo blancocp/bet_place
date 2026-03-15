@@ -8,6 +8,7 @@ defmodule BetPlace.Betting do
     PollaTicket,
     PollaSelection,
     PollaCombination,
+    PollaCombinationSelection,
     HvhMatchup,
     HvhMatchupSide,
     HvhBet
@@ -86,19 +87,40 @@ defmodule BetPlace.Betting do
         }
       end
     end)
-    |> Ecto.Multi.insert_all(:combinations, PollaCombination, fn %{ticket: ticket} ->
-      combinations
-      |> Enum.with_index(1)
-      |> Enum.map(fn {_combo, idx} ->
+    |> Ecto.Multi.insert_all(
+      :combinations,
+      PollaCombination,
+      fn %{ticket: ticket} ->
+        combinations
+        |> Enum.with_index(1)
+        |> Enum.map(fn {_combo, idx} ->
+          %{
+            polla_ticket_id: ticket.id,
+            combination_index: idx,
+            total_points: 0,
+            is_winner: false,
+            inserted_at: now,
+            updated_at: now
+          }
+        end)
+      end,
+      returning: true
+    )
+    |> Ecto.Multi.insert_all(:combo_selections, PollaCombinationSelection, fn %{
+                                                                                combinations:
+                                                                                  {_, combos}
+                                                                              } ->
+      sorted_combos = Enum.sort_by(combos, & &1.combination_index)
+
+      for {combo_record, combo_runners} <- Enum.zip(sorted_combos, combinations),
+          {runner_id, ger} <- Enum.zip(combo_runners, ordered_races) do
         %{
-          polla_ticket_id: ticket.id,
-          combination_index: idx,
-          total_points: 0,
-          is_winner: false,
-          inserted_at: now,
-          updated_at: now
+          polla_combination_id: combo_record.id,
+          game_event_race_id: ger.id,
+          runner_id: runner_id,
+          inserted_at: now
         }
-      end)
+      end
     end)
     |> Ecto.Multi.update(:debit_user, fn %{check_balance: user} ->
       User.balance_changeset(user, %{balance: Decimal.sub(user.balance, total_paid)})

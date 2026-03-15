@@ -407,53 +407,26 @@ defmodule BetPlace.Betting.Settlement do
     end
   end
 
-  defp score_ticket_combinations(ticket, ordered_races) do
-    selections =
+  defp score_ticket_combinations(ticket, _ordered_races) do
+    points_lookup =
       PollaSelection
       |> where([s], s.polla_ticket_id == ^ticket.id)
       |> Repo.all()
+      |> Map.new(fn s -> {{s.game_event_race_id, s.runner_id}, s.points_earned} end)
 
-    selections_by_race =
-      Enum.map(ordered_races, fn ger ->
-        runner_ids =
-          selections
-          |> Enum.filter(&(&1.game_event_race_id == ger.id))
-          |> Enum.map(& &1.runner_id)
-          |> Enum.sort()
+    PollaCombination
+    |> where([pc], pc.polla_ticket_id == ^ticket.id)
+    |> preload(:polla_combination_selections)
+    |> Repo.all()
+    |> Enum.each(fn combo ->
+      total_pts =
+        Enum.reduce(combo.polla_combination_selections, 0, fn cs, acc ->
+          acc + Map.get(points_lookup, {cs.game_event_race_id, cs.runner_id}, 0)
+        end)
 
-        {ger.id, runner_ids}
-      end)
-
-    points_lookup =
-      Map.new(selections, fn s -> {{s.game_event_race_id, s.runner_id}, s.points_earned} end)
-
-    runner_lists = Enum.map(selections_by_race, fn {_, ids} -> ids end)
-    combinations = cartesian_product(runner_lists)
-    race_ids = Enum.map(selections_by_race, fn {id, _} -> id end)
-
-    combos =
-      PollaCombination
-      |> where([pc], pc.polla_ticket_id == ^ticket.id)
-      |> order_by([pc], pc.combination_index)
-      |> Repo.all()
-
-    combinations
-    |> Enum.with_index(0)
-    |> Enum.each(fn {combo_runners, idx} ->
-      combo = Enum.at(combos, idx)
-
-      if combo do
-        total_pts =
-          combo_runners
-          |> Enum.zip(race_ids)
-          |> Enum.reduce(0, fn {runner_id, race_id}, acc ->
-            acc + Map.get(points_lookup, {race_id, runner_id}, 0)
-          end)
-
-        combo
-        |> PollaCombination.result_changeset(%{total_points: total_pts})
-        |> Repo.update!()
-      end
+      combo
+      |> PollaCombination.result_changeset(%{total_points: total_pts})
+      |> Repo.update!()
     end)
   end
 
@@ -648,12 +621,4 @@ defmodule BetPlace.Betting.Settlement do
   defp points_for_position(2), do: 3
   defp points_for_position(3), do: 1
   defp points_for_position(_), do: 0
-
-  defp cartesian_product([]), do: [[]]
-
-  defp cartesian_product([runners | rest]) do
-    for runner_id <- runners, combo <- cartesian_product(rest) do
-      [runner_id | combo]
-    end
-  end
 end

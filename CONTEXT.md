@@ -315,6 +315,17 @@ inserted_at         :utc_datetime
 updated_at          :utc_datetime
 ```
 
+### `polla_combination_selections`
+```
+id                      :binary_id, primary key
+polla_combination_id    :binary_id, FK -> polla_combinations
+game_event_race_id      :binary_id, FK -> game_event_races
+runner_id               :binary_id, FK -> runners
+inserted_at             :utc_datetime
+
+UNIQUE INDEX: (polla_combination_id, game_event_race_id)
+```
+
 ### `hvh_matchups`
 ```
 id              :binary_id, primary key
@@ -522,10 +533,12 @@ For each race.external_id from step 2:
 ### Step 4 — Admin creates game event
 ```
 Admin selects: course + game_type
-System queries: last 6 races for that course with status != :canceled
+System queries today's races for that course (status = scheduled/open):
+  - Polla: last 6 races by post_time (final 6 of the program)
+  - HvH:   all races of the day
 Admin confirms → INSERT game_events
-System inserts 6 game_event_races (race_order 1..6)
-betting_closes_at = MIN(post_time) of the 6 races
+System inserts N game_event_races (race_order 1..N)
+betting_closes_at = MIN(post_time) of the included races
 game_event.status transitions: :draft → :open
 ```
 
@@ -609,7 +622,8 @@ When last game_event_race.status = :finished:
 ## Game Rules Reference
 
 ### La Polla Hípica
-- Played on the last 6 races of a designated course
+- Played on the **last 6 races** of a designated course's daily program
+  - "Last 6" = the final 6 scheduled races by post_time (e.g. if 8 races, uses races 3–8)
 - Select 1 or more horses per race
 - Points: 1st place = 5pts · 2nd place = 3pts · 3rd place = 1pt
 - Multiple selections per race generate multiple combinations
@@ -620,6 +634,7 @@ When last game_event_race.status = :finished:
 - Non-runner → replaced by next program number
 
 ### Horse vs Horse
+- Uses **all races** of the course's daily program (not limited to last 6 like Polla)
 - Admin designates 2+ horses (side A vs side B) within a single race
 - Bettor picks one side
 - Game is valid only if at least one horse from either side finishes in top 5

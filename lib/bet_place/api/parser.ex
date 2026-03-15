@@ -180,13 +180,47 @@ defmodule BetPlace.Api.Parser do
   defp parse_datetime(nil), do: nil
 
   defp parse_datetime(datetime_str) when is_binary(datetime_str) do
-    normalized = String.replace(datetime_str, " ", "T") <> "Z"
+    case Regex.run(
+           ~r/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::(\d{2}))?\s*(?:\(UTC([+-]\d+)\))?/,
+           datetime_str
+         ) do
+      [_, date, time, seconds, offset_str] ->
+        secs = if seconds != "", do: seconds, else: "00"
+        offset_hours = String.to_integer(offset_str)
+        iso = "#{date}T#{time}:#{secs}#{format_offset(offset_hours)}"
 
-    case DateTime.from_iso8601(normalized) do
-      {:ok, dt, _} -> dt
-      _ -> nil
+        case DateTime.from_iso8601(iso) do
+          {:ok, dt, _} -> DateTime.shift_zone!(dt, "Etc/UTC")
+          _ -> nil
+        end
+
+      [_, date, time, seconds] ->
+        secs = if seconds != "", do: seconds, else: "00"
+        iso = "#{date}T#{time}:#{secs}Z"
+
+        case DateTime.from_iso8601(iso) do
+          {:ok, dt, _} -> dt
+          _ -> nil
+        end
+
+      [_, date, time] ->
+        iso = "#{date}T#{time}:00Z"
+
+        case DateTime.from_iso8601(iso) do
+          {:ok, dt, _} -> dt
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
+
+  defp format_offset(hours) when hours >= 0,
+    do: "+#{String.pad_leading(Integer.to_string(hours), 2, "0")}:00"
+
+  defp format_offset(hours),
+    do: "-#{String.pad_leading(Integer.to_string(abs(hours)), 2, "0")}:00"
 
   defp parse_integer(nil), do: nil
   defp parse_integer(""), do: nil

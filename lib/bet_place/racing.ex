@@ -154,14 +154,38 @@ defmodule BetPlace.Racing do
 
   # ── Runner Replacements ───────────────────────────────────────────────────
 
-  @doc "Returns today's scheduled/open races for a course, ordered by post_time asc."
+  @doc """
+  Returns the last N scheduled/open races for a course today, ordered by post_time asc.
+  "Last" means the final races of the program (e.g. if 8 races exist and limit=6, returns races 3-8).
+  """
   def list_last_races_for_game_event(course_id, limit \\ 6) do
     today = Date.utc_today()
 
+    subquery =
+      Race
+      |> where(
+        [r],
+        r.course_id == ^course_id and r.race_date == ^today and r.status in [:scheduled, :open]
+      )
+      |> order_by([r], desc: r.post_time, desc: r.external_id)
+      |> limit(^limit)
+
+    subquery
+    |> subquery()
+    |> order_by([r], asc: r.post_time, asc: r.external_id)
+    |> Repo.all()
+  end
+
+  @doc "Returns all scheduled/open races for a course today, ordered by post_time asc."
+  def list_all_races_for_game_event(course_id) do
+    today = Date.utc_today()
+
     Race
-    |> where([r], r.course_id == ^course_id and r.race_date == ^today and r.status in [:scheduled, :open])
-    |> order_by([r], asc: r.race_date, asc: r.post_time)
-    |> limit(^limit)
+    |> where(
+      [r],
+      r.course_id == ^course_id and r.race_date == ^today and r.status in [:scheduled, :open]
+    )
+    |> order_by([r], asc: r.post_time, asc: r.external_id)
     |> Repo.all()
   end
 

@@ -9,6 +9,7 @@ defmodule BetPlace.Betting.PollaCombination do
     field :is_winner, :boolean, default: false
 
     belongs_to :polla_ticket, BetPlace.Betting.PollaTicket
+    has_many :polla_combination_selections, BetPlace.Betting.PollaCombinationSelection
 
     timestamps(type: :utc_datetime)
   end

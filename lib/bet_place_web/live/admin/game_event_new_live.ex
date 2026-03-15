@@ -143,9 +143,13 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
     game_type_id = presence(params["game_type_id"])
     current_name = params["name"] || ""
 
+    game_type = Enum.find(socket.assigns.game_types, &(&1.id == game_type_id))
+
     preview_races =
       if course_id do
-        Racing.list_last_races_for_game_event(course_id, 6)
+        if game_type && game_type.code == :polla,
+          do: Racing.list_last_races_for_game_event(course_id, 6),
+          else: Racing.list_all_races_for_game_event(course_id)
       else
         []
       end
@@ -182,10 +186,18 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
     game_type_id = presence(params["game_type_id"])
     name = String.trim(params["name"] || "")
 
+    game_type = Enum.find(socket.assigns.game_types, &(&1.id == game_type_id))
+    is_polla = game_type && game_type.code == :polla
+
+    races_fn =
+      if is_polla,
+        do: fn -> Racing.list_last_races_for_game_event(course_id, 6) end,
+        else: fn -> Racing.list_all_races_for_game_event(course_id) end
+
     with true <- course_id != nil,
          true <- game_type_id != nil,
          config when not is_nil(config) <- Games.get_active_config_for_game_type(game_type_id),
-         races when races != [] <- Racing.list_last_races_for_game_event(course_id, 6) do
+         races when races != [] <- races_fn.() do
       attrs = %{
         game_type_id: game_type_id,
         game_config_id: config.id,
