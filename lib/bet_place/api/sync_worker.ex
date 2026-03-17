@@ -101,7 +101,14 @@ defmodule BetPlace.Api.SyncWorker do
 
   @impl true
   def handle_cast({:sync_event, game_event_id}, state) do
-    SyncService.sync_event_results(game_event_id)
+    result = SyncService.sync_event_results(game_event_id)
+
+    Phoenix.PubSub.broadcast(
+      BetPlace.PubSub,
+      "sync_event:#{game_event_id}",
+      {:sync_event_completed, result}
+    )
+
     {:noreply, state}
   end
 

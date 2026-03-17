@@ -165,6 +165,10 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
   end
 
   def mount(%{"id" => id}, _session, socket) do
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(BetPlace.PubSub, "sync_event:#{id}")
+    end
+
     event = Games.get_game_event!(id)
     event_races = Games.list_game_event_races(id)
     matchups = Betting.list_hvh_matchups_for_event(id)
@@ -187,11 +191,7 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
     {:noreply,
      socket
      |> assign(:syncing, true)
-     |> put_flash(
-       :info,
-       "Sincronizando #{race_count} carreras del evento (~#{estimated}s). " <>
-         "Recarga la página cuando termine."
-     )}
+     |> put_flash(:info, "Sincronizando #{race_count} carreras del evento (~#{estimated}s)...")}
   end
 
   def handle_event("close_event", _params, socket) do
@@ -212,6 +212,24 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "No se pudo cerrar el evento.")}
     end
+  end
+
+  def handle_info({:sync_event_completed, {:ok, synced_count}}, socket) do
+    event = Games.get_game_event!(socket.assigns.event.id)
+    event_races = Games.list_game_event_races(socket.assigns.event.id)
+    matchups = Betting.list_hvh_matchups_for_event(socket.assigns.event.id)
+
+    {:noreply,
+     socket
+     |> assign(event: event, event_races: event_races, matchups: matchups, syncing: false)
+     |> put_flash(:info, "Sync completado: #{synced_count} carrera(s) actualizadas.")}
+  end
+
+  def handle_info({:sync_event_completed, _error}, socket) do
+    {:noreply,
+     socket
+     |> assign(:syncing, false)
+     |> put_flash(:error, "El sync terminó con errores. Revisa los logs.")}
   end
 
   defp status_badge_class(:open), do: "badge-success"

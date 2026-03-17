@@ -48,13 +48,17 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
      |> assign(:placing, false)
      |> assign(:time_remaining, time_remaining(event.betting_closes_at))
      |> assign(:show_my_tickets, false)
+     |> assign(:expanded_combo_ids, MapSet.new())
      |> assign(:selected_tab, :polla)
-     |> assign(:selected_race, 0)
      |> assign(
        :my_polla_tickets,
        Betting.list_polla_tickets_for_user_and_event(user_id, event.id)
      )
-     |> assign(:my_hvh_bets, Betting.list_hvh_bets_for_user_and_event(user_id, event.id))}
+     |> assign(:my_hvh_bets, Betting.list_hvh_bets_for_user_and_event(user_id, event.id))
+     |> assign(
+       :leaderboard_rows,
+       if(event.status == :finished, do: Betting.list_leaderboard_rows(event.id), else: [])
+     )}
   end
 
   # ── Events ────────────────────────────────────────────────────────────────
@@ -86,16 +90,25 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
     {:noreply, assign(socket, :selected_tab, String.to_existing_atom(tab))}
   end
 
-  def handle_event("select_race", %{"index" => index}, socket) do
-    {:noreply, assign(socket, :selected_race, String.to_integer(index))}
-  end
-
   def handle_event("open_my_tickets", _, socket) do
     {:noreply, assign(socket, :show_my_tickets, true)}
   end
 
   def handle_event("close_my_tickets", _, socket) do
     {:noreply, assign(socket, :show_my_tickets, false)}
+  end
+
+  def handle_event("toggle_combo_detail", %{"combo_id" => combo_id}, socket) do
+    ids = socket.assigns.expanded_combo_ids
+
+    new_ids =
+      if MapSet.member?(ids, combo_id) do
+        MapSet.delete(ids, combo_id)
+      else
+        MapSet.put(ids, combo_id)
+      end
+
+    {:noreply, assign(socket, :expanded_combo_ids, new_ids)}
   end
 
   def handle_event("show_confirm", _, socket) do
@@ -250,7 +263,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
       <div class="pb-28">
-        <%!-- Header compacto --%>
+        <%!-- Header --%>
         <div class="flex items-center justify-between gap-2 mb-2">
           <div class="min-w-0">
             <h1 class="text-xl font-bold leading-tight truncate">{@event.name}</h1>
@@ -258,378 +271,404 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
           </div>
           <div class="text-right shrink-0 flex items-center gap-3">
             <span class={event_status_badge(@event.status)}>{status_label(@event.status)}</span>
-            <div>
+            <div :if={@event.status == :open}>
               <div class="text-lg font-mono font-bold tabular-nums leading-none text-warning">
                 {format_countdown(@time_remaining)}
               </div>
-              <p class="text-xs text-warning/60 text-right">hasta cerrar</p>
-            </div>
-          </div>
-        </div>
-
-        <%!-- Game tabs --%>
-        <div role="tablist" class="tabs tabs-bordered mb-2">
-          <button
-            role="tab"
-            class={[
-              "tab tab-sm",
-              if(@selected_tab == :polla, do: "tab-active font-semibold", else: "")
-            ]}
-            phx-click="switch_game_tab"
-            phx-value-tab="polla"
-          >
-            La Polla Hípica
-          </button>
-          <button
-            :if={@matchups != []}
-            role="tab"
-            class={["tab tab-sm", if(@selected_tab == :hvh, do: "tab-active font-semibold", else: "")]}
-            phx-click="switch_game_tab"
-            phx-value-tab="hvh"
-          >
-            Horse vs Horse <span class="badge badge-sm ml-1">{length(@matchups)}</span>
-          </button>
-        </div>
-
-        <%!-- ══ POLLA TAB ══ --%>
-        <div :if={@selected_tab == :polla}>
-          <%!-- Info strip --%>
-          <div class="flex flex-wrap gap-3 mb-2 text-xs text-base-content/60">
-            <span>
-              Ticket:
-              <strong class="text-base-content">
-                ${format_decimal(@event.game_config.ticket_value)}
-              </strong>
-            </span>
-            <span>
-              Máx/carrera:
-              <strong class="text-base-content">{@event.game_config.max_horses_per_race || 3}</strong>
-            </span>
-            <span>
-              Bote: <strong class="text-base-content">${format_decimal(@event.total_pool)}</strong>
-            </span>
-          </div>
-
-          <%!-- Race pills navigation + Mis tickets --%>
-          <div class="flex items-center gap-2 flex-wrap mb-3">
-            <%= for {{event_race, runners}, idx} <- Enum.with_index(@races_with_runners) do %>
-              <button
-                phx-click="select_race"
-                phx-value-index={idx}
-                class={[
-                  "btn btn-sm gap-1",
-                  if(@selected_race == idx,
-                    do: "btn-primary",
-                    else:
-                      if(race_complete?(@selections, event_race.id, runners),
-                        do: "btn-success btn-outline",
-                        else: "btn-ghost border border-base-300"
-                      )
-                  )
-                ]}
+              <p
+                :if={@event.status == :open and (@time_remaining || 0) > 0}
+                class="text-xs text-warning/60 text-right"
               >
-                <.icon
-                  :if={race_complete?(@selections, event_race.id, runners) and @selected_race != idx}
-                  name="hero-check"
-                  class="size-3"
-                /> C{event_race.race_order}
-                <span class="text-xs opacity-70">
-                  {selected_count(@selections, event_race.id)}
-                </span>
-              </button>
-            <% end %>
-            <div class="ml-auto">
-              <button phx-click="open_my_tickets" class="btn btn-sm btn-outline gap-1">
-                <.icon name="hero-ticket" class="size-4" /> Mis tickets
-                <span
-                  :if={length(@my_polla_tickets) + length(@my_hvh_bets) > 0}
-                  class="badge badge-sm badge-primary"
-                >
-                  {length(@my_polla_tickets) + length(@my_hvh_bets)}
-                </span>
-              </button>
+                hasta cerrar
+              </p>
             </div>
           </div>
+        </div>
 
-          <%!-- Active race card --%>
-          <%= case Enum.at(@races_with_runners, @selected_race) do %>
-            <% nil -> %>
-            <% {event_race, runners} -> %>
-              <div class="card bg-base-100 border border-base-200 shadow">
-                <div class="card-body p-4">
-                  <%!-- Race header --%>
-                  <div class="flex items-center justify-between mb-3">
-                    <div>
-                      <h2 class="font-bold text-lg">
-                        Carrera {event_race.race_order}
+        <%= if @event.status == :finished do %>
+          <%!-- Vista Resultados (evento finalizado) --%>
+          <section class="mb-4 p-3 rounded-lg bg-base-200">
+            <div class="flex flex-wrap gap-4 text-sm">
+              <span>Bote: <strong>${format_decimal(@event.total_pool)}</strong></span>
+              <span>
+                Valor base: <strong>${format_decimal(@event.game_config.ticket_value)}</strong>
+              </span>
+              <span>
+                Combinaciones: <strong>{leaderboard_total_combos(@leaderboard_rows)}</strong>
+              </span>
+            </div>
+          </section>
+          <section class="mb-4">
+            <h2 class="text-lg font-semibold mb-2">Resultados</h2>
+            <div class="overflow-x-auto rounded-lg border border-base-200">
+              <table class="table table-zebra table-sm w-full">
+                <thead>
+                  <tr>
+                    <th class="sticky left-0 bg-base-200 z-10">Usuario</th>
+                    <th
+                      :for={i <- 1..leaderboard_num_races(@leaderboard_rows)}
+                      class="text-center"
+                      colspan="2"
+                    >
+                      C{i}
+                    </th>
+                    <th class="text-center font-bold">Total</th>
+                  </tr>
+                  <tr>
+                    <th class="sticky left-0 bg-base-200 z-10"></th>
+                    <th
+                      :for={_i <- 1..leaderboard_num_races(@leaderboard_rows)}
+                      class="text-center text-xs"
+                    >
+                      E
+                    </th>
+                    <th
+                      :for={_i <- 1..leaderboard_num_races(@leaderboard_rows)}
+                      class="text-center text-xs"
+                    >
+                      Pt
+                    </th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr :for={row <- @leaderboard_rows}>
+                    <td class="font-medium sticky left-0 bg-base-100 z-10">{row.username}</td>
+                    <%= for r <- row.races do %>
+                      <td class="text-center text-sm">{r.selection || "—"}</td>
+                      <td class="text-center text-sm">{r.points}</td>
+                    <% end %>
+                    <td class="text-center font-bold">{row.total_points}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <div class="flex justify-end">
+            <button phx-click="open_my_tickets" class="btn btn-outline btn-sm gap-1">
+              <.icon name="hero-ticket" class="size-4" /> Mis tickets
+              <span
+                :if={length(@my_polla_tickets) + length(@my_hvh_bets) > 0}
+                class="badge badge-sm badge-primary"
+              >
+                {length(@my_polla_tickets) + length(@my_hvh_bets)}
+              </span>
+            </button>
+          </div>
+        <% else %>
+          <div>
+            <%!-- Game tabs --%>
+            <div role="tablist" class="tabs tabs-bordered mb-2">
+              <button
+                role="tab"
+                class={[
+                  "tab tab-sm",
+                  if(@selected_tab == :polla, do: "tab-active font-semibold", else: "")
+                ]}
+                phx-click="switch_game_tab"
+                phx-value-tab="polla"
+              >
+                La Polla Hípica
+              </button>
+              <button
+                :if={@matchups != []}
+                role="tab"
+                class={[
+                  "tab tab-sm",
+                  if(@selected_tab == :hvh, do: "tab-active font-semibold", else: "")
+                ]}
+                phx-click="switch_game_tab"
+                phx-value-tab="hvh"
+              >
+                Horse vs Horse <span class="badge badge-sm ml-1">{length(@matchups)}</span>
+              </button>
+            </div>
+
+            <%!-- ══ POLLA TAB ══ --%>
+            <div :if={@selected_tab == :polla}>
+              <%!-- Info strip --%>
+              <div class="flex flex-wrap gap-3 mb-2 text-xs text-base-content/60">
+                <span>
+                  Ticket:
+                  <strong class="text-base-content">
+                    ${format_decimal(@event.game_config.ticket_value)}
+                  </strong>
+                </span>
+                <span>
+                  Máx/carrera:
+                  <strong class="text-base-content">
+                    {@event.game_config.max_horses_per_race || 3}
+                  </strong>
+                </span>
+                <span>
+                  Bote:
+                  <strong class="text-base-content">${format_decimal(@event.total_pool)}</strong>
+                </span>
+              </div>
+
+              <%!-- Mis tickets button --%>
+              <div class="flex justify-end mb-3">
+                <button
+                  phx-click="open_my_tickets"
+                  class={[
+                    "btn btn-sm gap-2 shadow-sm transition-all duration-200",
+                    if(length(@my_polla_tickets) + length(@my_hvh_bets) > 0,
+                      do: "btn-primary hover:shadow-md",
+                      else: "btn-outline hover:bg-base-200"
+                    )
+                  ]}
+                >
+                  <.icon name="hero-ticket" class="size-5" />
+                  <span>Mis tickets</span>
+                  <span
+                    :if={length(@my_polla_tickets) + length(@my_hvh_bets) > 0}
+                    class="badge badge-sm badge-primary border-0 min-w-[1.25rem]"
+                  >
+                    {length(@my_polla_tickets) + length(@my_hvh_bets)}
+                  </span>
+                </button>
+              </div>
+
+              <%!-- Todas las carreras en la misma vista: una fila por carrera, números alineados horizontalmente --%>
+              <div class="space-y-4">
+                <%= for {{event_race, runners}, idx} <- Enum.with_index(@races_with_runners) do %>
+                  <div class="rounded-xl border border-base-200 bg-base-100 px-4 py-4">
+                    <div class="flex items-center justify-between mb-3">
+                      <h2 class="text-sm font-bold tracking-wide text-primary uppercase">
+                        {idx + 1}ª Válida
+                        <span class="text-base-content/40 font-normal normal-case ml-1">
+                          — Carrera {event_race.race_order}
+                        </span>
                       </h2>
-                      <p class="text-sm text-base-content/60">{event_race.race.distance_raw}</p>
-                    </div>
-                    <div class="flex items-center gap-2">
                       <span class={[
-                        "badge",
+                        "badge badge-sm font-semibold",
                         if(race_complete?(@selections, event_race.id, runners),
                           do: "badge-success",
                           else: "badge-ghost"
                         )
                       ]}>
-                        {selected_count(@selections, event_race.id)}/{length(runners)} sel.
+                        {selected_count(@selections, event_race.id)}/{if(runners == [],
+                          do: 0,
+                          else: length(runners)
+                        )}
                       </span>
                     </div>
-                  </div>
-
-                  <%!-- Runners --%>
-                  <div class="space-y-2">
                     <div
                       :if={runners == []}
-                      class="text-sm text-base-content/40 text-center py-8"
+                      class="text-sm text-base-content/40 py-4 text-center"
                     >
                       Sin datos de participantes aún.
                     </div>
                     <div
-                      :for={runner <- runners}
-                      class={[
-                        "flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors select-none",
-                        if(selected?(@selections, event_race.id, runner.id),
-                          do: "bg-primary/10 border border-primary",
-                          else: "bg-base-200 hover:bg-base-300"
-                        )
-                      ]}
-                      phx-click="toggle_runner"
-                      phx-value-race_id={event_race.id}
-                      phx-value-runner_id={runner.id}
+                      :if={runners != []}
+                      class="flex flex-wrap gap-2 pt-1"
                     >
-                      <div class="flex items-center gap-3">
-                        <span class="w-7 h-7 rounded-full bg-base-300 flex items-center justify-center text-xs font-bold shrink-0">
-                          {runner.program_number}
-                        </span>
-                        <div>
-                          <span class="font-medium">{runner.horse.name}</span>
-                          <span :if={runner.jockey} class="text-xs text-base-content/60 ml-2">
-                            {runner.jockey.name}
-                          </span>
-                        </div>
-                      </div>
-                      <div class="flex items-center gap-2 shrink-0">
-                        <span :if={runner.morning_line} class="badge badge-ghost badge-sm">
-                          {runner.morning_line}
-                        </span>
-                        <div class={[
-                          "w-5 h-5 rounded border-2 flex items-center justify-center shrink-0",
+                      <button
+                        :for={runner <- runners}
+                        type="button"
+                        class={[
+                          "btn btn-square btn-sm rounded-xl font-bold text-sm transition-all duration-150",
                           if(selected?(@selections, event_race.id, runner.id),
-                            do: "bg-primary border-primary",
-                            else: "border-base-content/30"
+                            do: "btn-primary",
+                            else: "btn-neutral hover:btn-ghost"
                           )
-                        ]}>
-                          <.icon
-                            :if={selected?(@selections, event_race.id, runner.id)}
-                            name="hero-check"
-                            class="w-3 h-3 text-primary-content"
-                          />
-                        </div>
-                      </div>
+                        ]}
+                        phx-click="toggle_runner"
+                        phx-value-race_id={event_race.id}
+                        phx-value-runner_id={runner.id}
+                      >
+                        {runner.program_number}
+                      </button>
                     </div>
                   </div>
+                <% end %>
+              </div>
+            </div>
 
-                  <%!-- Race prev / next --%>
-                  <div class="flex justify-between mt-4 pt-3 border-t border-base-200">
-                    <button
-                      class="btn btn-ghost btn-sm gap-1"
-                      phx-click="select_race"
-                      phx-value-index={@selected_race - 1}
-                      disabled={@selected_race == 0}
+            <%!-- ══ HVH TAB ══ --%>
+            <div :if={@selected_tab == :hvh}>
+              <div class="grid gap-4">
+                <div
+                  :for={matchup <- @matchups}
+                  class="card bg-base-100 border border-base-200 shadow"
+                >
+                  <div class="card-body p-4">
+                    <div class="flex items-center justify-between mb-3">
+                      <h3 class="font-bold text-sm text-base-content/70">
+                        {matchup.race.distance_raw || "—"}
+                      </h3>
+                      <span class={hvh_status_badge(matchup.status)}>
+                        {hvh_status_label(matchup.status)}
+                      </span>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3 mb-3">
+                      <button
+                        class={[
+                          "btn btn-outline h-auto py-3 flex-col gap-1",
+                          if(hvh_side_selected?(@hvh_selections, matchup.id, :a),
+                            do: "btn-primary",
+                            else: ""
+                          )
+                        ]}
+                        phx-click="hvh_select_side"
+                        phx-value-matchup_id={matchup.id}
+                        phx-value-side="a"
+                        disabled={matchup.status != :open}
+                      >
+                        <span class="text-xs font-bold uppercase tracking-wider">Lado A</span>
+                        <span
+                          :for={side <- Enum.filter(matchup.hvh_matchup_sides, &(&1.side == :a))}
+                          class="text-sm font-normal"
+                        >
+                          {side.runner.horse.name}
+                        </span>
+                      </button>
+
+                      <button
+                        class={[
+                          "btn btn-outline h-auto py-3 flex-col gap-1",
+                          if(hvh_side_selected?(@hvh_selections, matchup.id, :b),
+                            do: "btn-secondary",
+                            else: ""
+                          )
+                        ]}
+                        phx-click="hvh_select_side"
+                        phx-value-matchup_id={matchup.id}
+                        phx-value-side="b"
+                        disabled={matchup.status != :open}
+                      >
+                        <span class="text-xs font-bold uppercase tracking-wider">Lado B</span>
+                        <span
+                          :for={side <- Enum.filter(matchup.hvh_matchup_sides, &(&1.side == :b))}
+                          class="text-sm font-normal"
+                        >
+                          {side.runner.horse.name}
+                        </span>
+                      </button>
+                    </div>
+
+                    <div
+                      :if={hvh_any_side?(@hvh_selections, matchup.id)}
+                      class="flex items-center gap-2"
                     >
-                      <.icon name="hero-chevron-left" class="size-4" /> Anterior
-                    </button>
-                    <button
-                      class="btn btn-ghost btn-sm gap-1"
-                      phx-click="select_race"
-                      phx-value-index={@selected_race + 1}
-                      disabled={@selected_race == length(@races_with_runners) - 1}
-                    >
-                      Siguiente <.icon name="hero-chevron-right" class="size-4" />
-                    </button>
+                      <div class="flex-1">
+                        <input
+                          type="number"
+                          class="input input-bordered input-sm w-full"
+                          placeholder="Monto"
+                          min="1"
+                          value={hvh_amount(@hvh_selections, matchup.id)}
+                          phx-change="hvh_set_amount"
+                          phx-value-matchup_id={matchup.id}
+                          name="amount"
+                        />
+                      </div>
+                      <div class="text-xs text-base-content/60 shrink-0">
+                        × {format_decimal(@event.game_config.prize_multiplier || Decimal.new("1.80"))}
+                      </div>
+                      <button
+                        class="btn btn-sm btn-accent shrink-0"
+                        phx-click="place_hvh_bet"
+                        phx-value-matchup_id={matchup.id}
+                      >
+                        Apostar
+                      </button>
+                    </div>
+
+                    <div class="flex gap-4 mt-2 text-xs text-base-content/50">
+                      <span>Lado A: ${format_decimal(matchup.total_side_a)}</span>
+                      <span>Lado B: ${format_decimal(matchup.total_side_b)}</span>
+                    </div>
                   </div>
                 </div>
               </div>
-          <% end %>
-        </div>
+            </div>
+          </div>
 
-        <%!-- ══ HVH TAB ══ --%>
-        <div :if={@selected_tab == :hvh}>
-          <div class="grid gap-4">
-            <div
-              :for={matchup <- @matchups}
-              class="card bg-base-100 border border-base-200 shadow"
-            >
-              <div class="card-body p-4">
-                <div class="flex items-center justify-between mb-3">
-                  <h3 class="font-bold text-sm text-base-content/70">
-                    {matchup.race.distance_raw || "—"}
-                  </h3>
-                  <span class={hvh_status_badge(matchup.status)}>
-                    {hvh_status_label(matchup.status)}
+          <%!-- Bottom bar (solo Polla) --%>
+          <div
+            :if={@selected_tab == :polla}
+            class="fixed bottom-0 left-0 right-0 bg-base-100 border-t border-base-200 shadow-2xl z-10"
+          >
+            <div class="max-w-3xl mx-auto flex items-center justify-between gap-3 p-4">
+              <div class="text-center">
+                <div class="text-xs text-base-content/60">Combinaciones</div>
+                <div class="text-xl font-bold">{@combination_count}</div>
+              </div>
+              <div class="text-center">
+                <div class="text-xs text-base-content/60">Valor</div>
+                <div class="text-xl font-bold">
+                  ${format_decimal(@event.game_config.ticket_value)}
+                </div>
+              </div>
+              <div class="text-center">
+                <div class="text-xs text-base-content/60">Total</div>
+                <div class="text-xl font-bold text-primary">${format_decimal(@total_paid)}</div>
+              </div>
+              <button
+                class="btn btn-primary btn-lg"
+                phx-click="show_confirm"
+                disabled={not @can_submit or @event.status != :open}
+              >
+                Apostar
+              </button>
+            </div>
+          </div>
+
+          <%!-- Confirmation modal --%>
+          <div :if={@show_confirm} class="modal modal-open">
+            <div class="modal-box">
+              <h3 class="font-bold text-lg mb-4">Confirmar ticket</h3>
+
+              <div class="space-y-2 mb-4">
+                <div
+                  :for={{event_race, runners} <- @races_with_runners}
+                  :if={selected_count(@selections, event_race.id) > 0}
+                  class="flex justify-between text-sm"
+                >
+                  <span class="text-base-content/60">Carrera {event_race.race_order}</span>
+                  <span class="font-medium">
+                    {selected_runner_names(@selections, event_race.id, runners)}
                   </span>
                 </div>
+              </div>
 
-                <div class="grid grid-cols-2 gap-3 mb-3">
-                  <button
-                    class={[
-                      "btn btn-outline h-auto py-3 flex-col gap-1",
-                      if(hvh_side_selected?(@hvh_selections, matchup.id, :a),
-                        do: "btn-primary",
-                        else: ""
-                      )
-                    ]}
-                    phx-click="hvh_select_side"
-                    phx-value-matchup_id={matchup.id}
-                    phx-value-side="a"
-                    disabled={matchup.status != :open}
-                  >
-                    <span class="text-xs font-bold uppercase tracking-wider">Lado A</span>
-                    <span
-                      :for={side <- Enum.filter(matchup.hvh_matchup_sides, &(&1.side == :a))}
-                      class="text-sm font-normal"
-                    >
-                      {side.runner.horse.name}
-                    </span>
-                  </button>
+              <div class="divider my-2"></div>
 
-                  <button
-                    class={[
-                      "btn btn-outline h-auto py-3 flex-col gap-1",
-                      if(hvh_side_selected?(@hvh_selections, matchup.id, :b),
-                        do: "btn-secondary",
-                        else: ""
-                      )
-                    ]}
-                    phx-click="hvh_select_side"
-                    phx-value-matchup_id={matchup.id}
-                    phx-value-side="b"
-                    disabled={matchup.status != :open}
-                  >
-                    <span class="text-xs font-bold uppercase tracking-wider">Lado B</span>
-                    <span
-                      :for={side <- Enum.filter(matchup.hvh_matchup_sides, &(&1.side == :b))}
-                      class="text-sm font-normal"
-                    >
-                      {side.runner.horse.name}
-                    </span>
-                  </button>
+              <div class="space-y-1 text-sm mb-4">
+                <div class="flex justify-between">
+                  <span>Combinaciones</span>
+                  <span class="font-bold">{@combination_count}</span>
                 </div>
-
-                <div :if={hvh_any_side?(@hvh_selections, matchup.id)} class="flex items-center gap-2">
-                  <div class="flex-1">
-                    <input
-                      type="number"
-                      class="input input-bordered input-sm w-full"
-                      placeholder="Monto"
-                      min="1"
-                      value={hvh_amount(@hvh_selections, matchup.id)}
-                      phx-change="hvh_set_amount"
-                      phx-value-matchup_id={matchup.id}
-                      name="amount"
-                    />
-                  </div>
-                  <div class="text-xs text-base-content/60 shrink-0">
-                    × {format_decimal(@event.game_config.prize_multiplier || Decimal.new("1.80"))}
-                  </div>
-                  <button
-                    class="btn btn-sm btn-accent shrink-0"
-                    phx-click="place_hvh_bet"
-                    phx-value-matchup_id={matchup.id}
-                  >
-                    Apostar
-                  </button>
+                <div class="flex justify-between">
+                  <span>Total a pagar</span>
+                  <span class="font-bold text-primary">${format_decimal(@total_paid)}</span>
                 </div>
-
-                <div class="flex gap-4 mt-2 text-xs text-base-content/50">
-                  <span>Lado A: ${format_decimal(matchup.total_side_a)}</span>
-                  <span>Lado B: ${format_decimal(matchup.total_side_b)}</span>
+                <div class="flex justify-between text-base-content/60">
+                  <span>Saldo actual</span>
+                  <span>${format_decimal(@current_scope.user.balance)}</span>
+                </div>
+                <div class="flex justify-between text-base-content/60">
+                  <span>Saldo después</span>
+                  <span>
+                    ${format_decimal(Decimal.sub(@current_scope.user.balance, @total_paid))}
+                  </span>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      <%!-- Bottom bar (solo Polla) --%>
-      <div
-        :if={@selected_tab == :polla}
-        class="fixed bottom-0 left-0 right-0 bg-base-100 border-t border-base-200 shadow-2xl z-10"
-      >
-        <div class="max-w-3xl mx-auto flex items-center justify-between gap-3 p-4">
-          <div class="text-center">
-            <div class="text-xs text-base-content/60">Combinaciones</div>
-            <div class="text-xl font-bold">{@combination_count}</div>
-          </div>
-          <div class="text-center">
-            <div class="text-xs text-base-content/60">Valor</div>
-            <div class="text-xl font-bold">${format_decimal(@event.game_config.ticket_value)}</div>
-          </div>
-          <div class="text-center">
-            <div class="text-xs text-base-content/60">Total</div>
-            <div class="text-xl font-bold text-primary">${format_decimal(@total_paid)}</div>
-          </div>
-          <button
-            class="btn btn-primary btn-lg"
-            phx-click="show_confirm"
-            disabled={not @can_submit or @event.status != :open}
-          >
-            Apostar
-          </button>
-        </div>
-      </div>
-
-      <%!-- Confirmation modal --%>
-      <div :if={@show_confirm} class="modal modal-open">
-        <div class="modal-box">
-          <h3 class="font-bold text-lg mb-4">Confirmar ticket</h3>
-
-          <div class="space-y-2 mb-4">
-            <div
-              :for={{event_race, runners} <- @races_with_runners}
-              :if={selected_count(@selections, event_race.id) > 0}
-              class="flex justify-between text-sm"
-            >
-              <span class="text-base-content/60">Carrera {event_race.race_order}</span>
-              <span class="font-medium">
-                {selected_runner_names(@selections, event_race.id, runners)}
-              </span>
+              <div class="modal-action">
+                <button class="btn" phx-click="hide_confirm" disabled={@placing}>
+                  Cancelar
+                </button>
+                <button class="btn btn-primary" phx-click="place_ticket" disabled={@placing}>
+                  {if @placing, do: "Procesando...", else: "Confirmar"}
+                </button>
+              </div>
             </div>
+            <div class="modal-backdrop" phx-click="hide_confirm"></div>
           </div>
-
-          <div class="divider my-2"></div>
-
-          <div class="space-y-1 text-sm mb-4">
-            <div class="flex justify-between">
-              <span>Combinaciones</span>
-              <span class="font-bold">{@combination_count}</span>
-            </div>
-            <div class="flex justify-between">
-              <span>Total a pagar</span>
-              <span class="font-bold text-primary">${format_decimal(@total_paid)}</span>
-            </div>
-            <div class="flex justify-between text-base-content/60">
-              <span>Saldo actual</span>
-              <span>${format_decimal(@current_scope.user.balance)}</span>
-            </div>
-            <div class="flex justify-between text-base-content/60">
-              <span>Saldo después</span>
-              <span>${format_decimal(Decimal.sub(@current_scope.user.balance, @total_paid))}</span>
-            </div>
-          </div>
-
-          <div class="modal-action">
-            <button class="btn" phx-click="hide_confirm" disabled={@placing}>
-              Cancelar
-            </button>
-            <button class="btn btn-primary" phx-click="place_ticket" disabled={@placing}>
-              {if @placing, do: "Procesando...", else: "Confirmar"}
-            </button>
-          </div>
-        </div>
-        <div class="modal-backdrop" phx-click="hide_confirm"></div>
+        <% end %>
       </div>
       <%!-- Drawer overlay --%>
       <div
@@ -672,52 +711,79 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
               Sin tickets en este evento.
             </div>
 
-            <div class="space-y-3">
-              <div
-                :for={ticket <- @my_polla_tickets}
-                class="card bg-base-200 shadow-sm"
-              >
-                <div class="card-body p-3">
-                  <div class="flex items-center justify-between mb-2">
-                    <span class="font-mono text-xs text-base-content/50">
-                      #{String.slice(ticket.id, 0, 8)}
-                    </span>
-                    <span class={ticket_badge(ticket.status)}>
-                      {ticket_label(ticket.status)}
-                    </span>
-                  </div>
-                  <div class="flex justify-between text-sm mb-2">
-                    <span class="text-base-content/60">{ticket.combination_count} combinaciones</span>
-                    <span class="font-medium">${format_decimal(ticket.total_paid)}</span>
-                  </div>
-                  <%!-- Selecciones por carrera --%>
-                  <div class="space-y-1">
-                    <div
-                      :for={
-                        sel <- Enum.sort_by(ticket.polla_selections, & &1.game_event_race.race_order)
-                      }
-                      class="flex items-center justify-between text-xs"
-                    >
-                      <span class="text-base-content/50">
-                        C{sel.game_event_race.race_order}
-                      </span>
-                      <span class={[
-                        "font-medium",
-                        if(sel.was_replaced, do: "line-through text-base-content/40", else: "")
-                      ]}>
-                        {sel.runner.horse.name}
-                      </span>
-                      <span :if={sel.points_earned > 0} class="text-success text-xs">
-                        +{sel.points_earned}pts
-                      </span>
-                    </div>
-                  </div>
+            <div class="space-y-4">
+              <div :for={ticket <- @my_polla_tickets} class="space-y-2">
+                <div class="flex items-center justify-between text-xs text-base-content/60">
+                  <span class="font-mono">#{String.slice(ticket.id, 0, 8)}</span>
+                  <span class={ticket_badge(ticket.status)}>{ticket_label(ticket.status)}</span>
+                </div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span>{ticket.combination_count} combinaciones</span>
+                  <span class="font-medium">${format_decimal(ticket.total_paid)}</span>
+                </div>
+                <% points_lookup = selection_points_lookup(ticket) %>
+                <div class="space-y-2">
                   <div
-                    :if={ticket.total_points}
-                    class="flex justify-between text-xs mt-2 pt-2 border-t border-base-300"
+                    :for={combo <- combo_cards_for_ticket(ticket)}
+                    class="card bg-base-200 shadow-sm border border-base-300"
                   >
-                    <span class="text-base-content/60">Puntos totales</span>
-                    <span class="font-bold">{ticket.total_points}</span>
+                    <div
+                      class="card-body p-3 cursor-pointer"
+                      phx-click="toggle_combo_detail"
+                      phx-value-combo_id={combo.id}
+                    >
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="font-mono font-semibold text-sm">
+                          {combo_string(combo)}
+                        </span>
+                        <div class="flex items-center gap-2 shrink-0">
+                          <span class="badge badge-ghost badge-sm">
+                            {combo.total_points} pts
+                          </span>
+                          <span
+                            :if={combo.is_winner && combo.prize_amount}
+                            class="text-success font-bold text-xs"
+                          >
+                            ${format_decimal(combo.prize_amount)}
+                          </span>
+                          <.icon
+                            name={
+                              if MapSet.member?(@expanded_combo_ids, combo.id),
+                                do: "hero-chevron-up",
+                                else: "hero-chevron-down"
+                            }
+                            class="w-4 h-4 text-base-content/40"
+                          />
+                        </div>
+                      </div>
+                      <%!-- Detalle por válida --%>
+                      <div
+                        :if={MapSet.member?(@expanded_combo_ids, combo.id)}
+                        class="mt-3 pt-3 border-t border-base-300"
+                      >
+                        <p class="text-xs text-base-content/50 uppercase tracking-wide mb-2">
+                          Detalle por válida
+                        </p>
+                        <div class="grid grid-cols-3 gap-x-4 gap-y-1 text-xs">
+                          <div
+                            :for={cs <- combo_selections_sorted(combo)}
+                            class="flex justify-between"
+                          >
+                            <span class="text-base-content/60">{cs.game_event_race.race_order}V</span>
+                            <span class="font-medium">{cs.runner.program_number}</span>
+                            <span class={
+                              points_result_class(
+                                Map.get(points_lookup, {cs.game_event_race_id, cs.runner_id}, 0)
+                              )
+                            }>
+                              {points_to_result(
+                                Map.get(points_lookup, {cs.game_event_race_id, cs.runner_id}, 0)
+                              )}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -825,7 +891,8 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
 
     runners
     |> Enum.filter(fn r -> MapSet.member?(selected_ids, to_string(r.id)) end)
-    |> Enum.map_join(", ", fn r -> r.horse.name end)
+    |> Enum.sort_by(& &1.program_number)
+    |> Enum.map_join(", ", fn r -> to_string(r.program_number) end)
   end
 
   defp time_remaining(nil), do: nil
@@ -916,4 +983,41 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
   defp status_label(:canceled), do: "Cancelado"
   defp status_label(:processing), do: "Procesando"
   defp status_label(_), do: "Borrador"
+
+  defp selection_points_lookup(ticket) do
+    ticket.polla_selections
+    |> Map.new(fn s -> {{s.game_event_race_id, s.runner_id}, s.points_earned} end)
+  end
+
+  defp combo_cards_for_ticket(ticket) do
+    ticket.polla_combinations
+    |> Enum.sort_by(& &1.combination_index)
+  end
+
+  defp combo_string(combo) do
+    sorted = combo_selections_sorted(combo)
+
+    if sorted == [],
+      do: "—",
+      else: Enum.map_join(sorted, "-", fn cs -> to_string(cs.runner.program_number) end)
+  end
+
+  defp combo_selections_sorted(combo) do
+    Enum.sort_by(combo.polla_combination_selections || [], & &1.game_event_race.race_order)
+  end
+
+  defp points_to_result(5), do: "1º"
+  defp points_to_result(3), do: "2º"
+  defp points_to_result(1), do: "3º"
+  defp points_to_result(_), do: "X"
+
+  defp points_result_class(5), do: "text-success font-medium"
+  defp points_result_class(3), do: "text-info font-medium"
+  defp points_result_class(1), do: "text-warning font-medium"
+  defp points_result_class(_), do: "text-base-content/40"
+
+  defp leaderboard_num_races([]), do: 0
+  defp leaderboard_num_races([row | _]), do: length(row.races)
+
+  defp leaderboard_total_combos(rows), do: length(rows)
 end
