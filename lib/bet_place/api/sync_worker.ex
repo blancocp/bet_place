@@ -62,7 +62,8 @@ defmodule BetPlace.Api.SyncWorker do
   def handle_info(:sync_racecards, state) do
     if SyncSettings.auto_sync_enabled?() and within_race_hours?() do
       today = Date.to_string(Date.utc_today())
-      SyncService.sync_racecards(today)
+      result = SyncService.sync_racecards(today)
+      broadcast_sync_admin(%{kind: :racecards, target: today, source: :auto, result: result})
     end
 
     schedule_racecards()
@@ -73,7 +74,8 @@ defmodule BetPlace.Api.SyncWorker do
   def handle_info(:poll_results, state) do
     if SyncSettings.auto_sync_enabled?() and within_race_hours?() do
       today = Date.to_string(Date.utc_today())
-      SyncService.sync_results(today)
+      result = SyncService.sync_results(today)
+      broadcast_sync_admin(%{kind: :results, target: today, source: :auto, result: result})
     end
 
     schedule_results()
@@ -82,20 +84,32 @@ defmodule BetPlace.Api.SyncWorker do
 
   @impl true
   def handle_cast({:sync, :racecards, date}, state) do
-    SyncService.sync_racecards(date)
+    result = SyncService.sync_racecards(date)
+    broadcast_sync_admin(%{kind: :racecards, target: date, result: result})
     {:noreply, state}
   end
 
   @impl true
   def handle_cast({:sync, :results, date}, state) do
-    SyncService.sync_results(date)
+    result = SyncService.sync_results(date)
+    broadcast_sync_admin(%{kind: :results, target: date, result: result})
     {:noreply, state}
   end
 
   @impl true
   def handle_cast({:sync, :all, date}, state) do
-    SyncService.sync_racecards(date)
-    SyncService.sync_results(date)
+    racecards_result = SyncService.sync_racecards(date)
+    broadcast_sync_admin(%{kind: :racecards, target: date, result: racecards_result})
+
+    results_result = SyncService.sync_results(date)
+    broadcast_sync_admin(%{kind: :results, target: date, result: results_result})
+
+    broadcast_sync_admin(%{
+      kind: :all,
+      target: date,
+      result: %{racecards: racecards_result, results: results_result}
+    })
+
     {:noreply, state}
   end
 
@@ -108,6 +122,8 @@ defmodule BetPlace.Api.SyncWorker do
       "sync_event:#{game_event_id}",
       {:sync_event_completed, result}
     )
+
+    broadcast_sync_admin(%{kind: :event, target: game_event_id, result: result})
 
     {:noreply, state}
   end
@@ -130,5 +146,9 @@ defmodule BetPlace.Api.SyncWorker do
   defp api_key_configured? do
     key = Application.get_env(:bet_place, :racing_api_key)
     is_binary(key) and key != ""
+  end
+
+  defp broadcast_sync_admin(payload) when is_map(payload) do
+    Phoenix.PubSub.broadcast(BetPlace.PubSub, "sync_admin", {:sync_completed, payload})
   end
 end
