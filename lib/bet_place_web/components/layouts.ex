@@ -71,6 +71,16 @@ defmodule BetPlaceWeb.Layouts do
               </li>
               <div class="divider my-0"></div>
               <li>
+                <.link navigate={~p"/mi-perfil"}>
+                  <.icon name="hero-identification" class="size-4" /> Mi perfil
+                </.link>
+              </li>
+              <li>
+                <.link navigate={~p"/pagos"}>
+                  <.icon name="hero-banknotes" class="size-4" /> Pagos y recargas
+                </.link>
+              </li>
+              <li>
                 <.link href={~p"/logout"} method="delete" class="text-error">
                   <.icon name="hero-arrow-right-on-rectangle" class="size-4" /> Cerrar sesión
                 </.link>

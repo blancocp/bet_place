@@ -3,7 +3,9 @@ defmodule BetPlace.Finance.Transaction do
   import Ecto.Changeset
 
   schema "transactions" do
-    field :type, Ecto.Enum, values: [:deposit, :withdrawal, :bet, :payout, :refund]
+    field :type, Ecto.Enum,
+      values: [:deposit, :withdrawal, :bet, :payout, :refund, :manual_adjustment]
+
     field :amount, :decimal
     field :direction, Ecto.Enum, values: [:credit, :debit]
     field :reference_type, :string
