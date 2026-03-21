@@ -43,6 +43,6 @@ defmodule BetPlace.Racing.Runner do
 
   def result_changeset(runner, attrs) do
     runner
-    |> cast(attrs, [:position, :distance_beaten, :non_runner, :status])
+    |> cast(attrs, [:position, :distance_beaten, :non_runner])
   end
 end

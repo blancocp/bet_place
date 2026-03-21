@@ -254,7 +254,10 @@ defmodule BetPlace.Betting.Settlement do
   Resolves an HvH matchup after the race finishes.
   Compares the best position (lowest) of each side within top 5.
   """
-  def resolve_hvh_matchup(matchup_id) do
+  def resolve_hvh_matchup(matchup_id, opts \\ []) do
+    settlement_source = Keyword.get(opts, :settlement_source, :auto_sync)
+    settled_by_user_id = Keyword.get(opts, :settled_by_user_id)
+
     matchup =
       HvhMatchup
       |> preload(hvh_matchup_sides: :runner)
@@ -271,29 +274,42 @@ defmodule BetPlace.Betting.Settlement do
         Enum.any?(matchup.hvh_matchup_sides, fn s -> s.runner && s.runner.non_runner end)
 
       if has_non_runner do
-        void_hvh_matchup(matchup_id, "Non-runner in matchup")
+        if length(sides_a) == 1 and length(sides_b) == 1 do
+          void_hvh_matchup(matchup_id, "Retiro en enfrentamiento 1 vs 1",
+            settlement_source: settlement_source,
+            settled_by_user_id: settled_by_user_id
+          )
+        else
+          settle_hvh_by_remaining(matchup, settlement_source, settled_by_user_id)
+        end
       else
         best_a = best_top5_position(sides_a)
         best_b = best_top5_position(sides_b)
 
         cond do
           is_nil(best_a) and is_nil(best_b) ->
-            void_hvh_matchup(matchup_id, "No runner finished in top 5")
+            void_hvh_matchup(matchup_id, "No hay ejemplares en pizarra (top 5)",
+              settlement_source: settlement_source,
+              settled_by_user_id: settled_by_user_id
+            )
 
           is_nil(best_a) ->
-            settle_hvh_winner(matchup, :side_b)
+            settle_hvh_winner(matchup, :side_b, settlement_source, settled_by_user_id)
 
           is_nil(best_b) ->
-            settle_hvh_winner(matchup, :side_a)
+            settle_hvh_winner(matchup, :side_a, settlement_source, settled_by_user_id)
 
           best_a < best_b ->
-            settle_hvh_winner(matchup, :side_a)
+            settle_hvh_winner(matchup, :side_a, settlement_source, settled_by_user_id)
 
           best_b < best_a ->
-            settle_hvh_winner(matchup, :side_b)
+            settle_hvh_winner(matchup, :side_b, settlement_source, settled_by_user_id)
 
           true ->
-            void_hvh_matchup(matchup_id, "Tie in position")
+            void_hvh_matchup(matchup_id, "Empate de llegada",
+              settlement_source: settlement_source,
+              settled_by_user_id: settled_by_user_id
+            )
         end
       end
     end
@@ -302,9 +318,11 @@ defmodule BetPlace.Betting.Settlement do
   @doc """
   Voids an HvH matchup and refunds all pending bets.
   """
-  def void_hvh_matchup(matchup_id, reason) do
+  def void_hvh_matchup(matchup_id, reason, opts \\ []) do
     Logger.info("Settlement HvH: voiding matchup #{matchup_id} — #{reason}")
     now = DateTime.utc_now() |> DateTime.truncate(:second)
+    settlement_source = Keyword.get(opts, :settlement_source, :auto_sync)
+    settled_by_user_id = Keyword.get(opts, :settled_by_user_id)
 
     matchup = Repo.get!(HvhMatchup, matchup_id)
 
@@ -313,7 +331,10 @@ defmodule BetPlace.Betting.Settlement do
       status: :void,
       result_side: :void,
       void_reason: reason,
-      resolved_at: now
+      resolved_at: now,
+      settled_at: now,
+      settlement_source: settlement_source,
+      settled_by_user_id: settled_by_user_id
     })
     |> Repo.update!()
 
@@ -352,7 +373,17 @@ defmodule BetPlace.Betting.Settlement do
       |> Repo.all()
 
     Enum.each(matchup_ids, fn id ->
-      void_hvh_matchup(id, "Non-runner withdrawal")
+      matchup =
+        HvhMatchup
+        |> preload(:hvh_matchup_sides)
+        |> Repo.get!(id)
+
+      sides_a = Enum.count(matchup.hvh_matchup_sides, &(&1.side == :a))
+      sides_b = Enum.count(matchup.hvh_matchup_sides, &(&1.side == :b))
+
+      if sides_a == 1 and sides_b == 1 do
+        void_hvh_matchup(id, "Retiro de ejemplar en 1 vs 1")
+      end
     end)
   end
 
@@ -367,7 +398,7 @@ defmodule BetPlace.Betting.Settlement do
       |> Repo.all()
 
     Enum.each(matchup_ids, fn id ->
-      void_hvh_matchup(id, "Race canceled")
+      void_hvh_matchup(id, "Carrera cancelada")
     end)
   end
 
@@ -497,14 +528,17 @@ defmodule BetPlace.Betting.Settlement do
     Logger.info("Settlement: refunded #{length(tickets)} tickets for canceled event #{event.id}")
   end
 
-  defp settle_hvh_winner(matchup, winning_side) do
+  defp settle_hvh_winner(matchup, winning_side, settlement_source, settled_by_user_id) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     matchup
     |> HvhMatchup.result_changeset(%{
       status: :finished,
       result_side: winning_side,
-      resolved_at: now
+      resolved_at: now,
+      settled_at: now,
+      settlement_source: settlement_source,
+      settled_by_user_id: settled_by_user_id
     })
     |> Repo.update!()
 
@@ -533,6 +567,51 @@ defmodule BetPlace.Betting.Settlement do
 
     Logger.info("Settlement HvH: matchup #{matchup.id} won by #{winning_side}")
     :ok
+  end
+
+  defp settle_hvh_by_remaining(matchup, settlement_source, settled_by_user_id) do
+    valid_sides_a =
+      matchup.hvh_matchup_sides
+      |> Enum.filter(&((&1.side == :a and &1.runner) && not &1.runner.non_runner))
+
+    valid_sides_b =
+      matchup.hvh_matchup_sides
+      |> Enum.filter(&((&1.side == :b and &1.runner) && not &1.runner.non_runner))
+
+    best_a = best_top5_position(valid_sides_a)
+    best_b = best_top5_position(valid_sides_b)
+
+    cond do
+      valid_sides_a == [] or valid_sides_b == [] ->
+        void_hvh_matchup(matchup.id, "Retiro deja bloque sin representantes",
+          settlement_source: settlement_source,
+          settled_by_user_id: settled_by_user_id
+        )
+
+      is_nil(best_a) and is_nil(best_b) ->
+        void_hvh_matchup(matchup.id, "No hay ejemplares en pizarra (top 5)",
+          settlement_source: settlement_source,
+          settled_by_user_id: settled_by_user_id
+        )
+
+      is_nil(best_a) ->
+        settle_hvh_winner(matchup, :side_b, settlement_source, settled_by_user_id)
+
+      is_nil(best_b) ->
+        settle_hvh_winner(matchup, :side_a, settlement_source, settled_by_user_id)
+
+      best_a < best_b ->
+        settle_hvh_winner(matchup, :side_a, settlement_source, settled_by_user_id)
+
+      best_b < best_a ->
+        settle_hvh_winner(matchup, :side_b, settlement_source, settled_by_user_id)
+
+      true ->
+        void_hvh_matchup(matchup.id, "Empate de llegada",
+          settlement_source: settlement_source,
+          settled_by_user_id: settled_by_user_id
+        )
+    end
   end
 
   defp pay_hvh_winner(bet) do
