@@ -178,7 +178,7 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
         </div>
 
         <%!-- Quick actions --%>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div class="card bg-base-100 border border-base-200 shadow-sm">
             <div class="card-body">
               <h2 class="card-title text-lg">Gestión de Eventos</h2>
@@ -213,6 +213,17 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
               <div class="card-actions mt-2">
                 <.link navigate={~p"/admin/tickets"} class="btn btn-primary btn-sm">
                   Ver tickets
+                </.link>
+              </div>
+            </div>
+          </div>
+          <div class="card bg-base-100 border border-base-200 shadow-sm">
+            <div class="card-body">
+              <h2 class="card-title text-lg">Recargas</h2>
+              <p class="text-sm text-base-content/60">Aprobar o rechazar pagos y ajustar saldo.</p>
+              <div class="card-actions mt-2">
+                <.link navigate={~p"/admin/pagos"} class="btn btn-primary btn-sm">
+                  Revisar recargas
                 </.link>
               </div>
             </div>
