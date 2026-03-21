@@ -18,6 +18,7 @@ defmodule BetPlace.Betting do
   alias BetPlace.Finance.Transaction
   alias BetPlace.Games
   alias BetPlace.Games.GameEvent
+  alias BetPlace.Betting.Settlement
 
   # ── Place Polla Ticket (Ecto.Multi) ───────────────────────────────────────
 
@@ -339,8 +340,10 @@ defmodule BetPlace.Betting do
   `amount` is a Decimal (already validated as > 0).
   """
   def place_hvh_bet(user_id, %HvhMatchup{} = matchup, side, amount) do
+    payout_pct = matchup.payout_pct || Decimal.new("80.00")
+
     prize_multiplier =
-      matchup.game_event.game_config.prize_multiplier || Decimal.new("1.80")
+      Decimal.add(Decimal.new("1.00"), Decimal.div(payout_pct, Decimal.new("100")))
 
     potential_payout = Decimal.mult(amount, prize_multiplier)
     now = DateTime.utc_now() |> DateTime.truncate(:second)
@@ -445,6 +448,8 @@ defmodule BetPlace.Betting do
   `side_a_runner_ids` and `side_b_runner_ids` are lists of runner UUIDs.
   """
   def create_hvh_matchup_with_sides(matchup_attrs, side_a_runner_ids, side_b_runner_ids) do
+    matchup_attrs = Map.put_new(matchup_attrs, :payout_pct, Decimal.new("80.00"))
+
     Ecto.Multi.new()
     |> Ecto.Multi.insert(:matchup, HvhMatchup.changeset(%HvhMatchup{}, matchup_attrs))
     |> Ecto.Multi.run(:sides, fn repo, %{matchup: matchup} ->
@@ -459,6 +464,36 @@ defmodule BetPlace.Betting do
       {:ok, :ok}
     end)
     |> Repo.transaction()
+  end
+
+  def side_label(:a), do: "Macho"
+  def side_label(:b), do: "Hembra"
+  def side_label(_), do: "—"
+
+  def side_badge_class(:a), do: "badge badge-primary badge-sm"
+  def side_badge_class(:b), do: "badge badge-secondary badge-sm"
+  def side_badge_class(_), do: "badge badge-ghost badge-sm"
+
+  def payout_multiplier_for_matchup(%HvhMatchup{} = matchup) do
+    payout_pct = matchup.payout_pct || Decimal.new("80.00")
+    Decimal.add(Decimal.new("1.00"), Decimal.div(payout_pct, Decimal.new("100")))
+  end
+
+  def resolve_hvh_matchup_manual(matchup_id, admin_user_id, payout_pct) do
+    with %HvhMatchup{} = matchup <- Repo.get(HvhMatchup, matchup_id),
+         true <- matchup.status in [:open, :closed] do
+      matchup
+      |> HvhMatchup.result_changeset(%{payout_pct: payout_pct})
+      |> Repo.update!()
+
+      Settlement.resolve_hvh_matchup(matchup_id,
+        settlement_source: :manual_admin,
+        settled_by_user_id: admin_user_id
+      )
+    else
+      nil -> {:error, :matchup_not_found}
+      _ -> {:error, :matchup_already_resolved}
+    end
   end
 
   def count_tickets, do: Repo.aggregate(HvhBet, :count)

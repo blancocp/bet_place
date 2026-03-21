@@ -11,7 +11,7 @@ defmodule BetPlaceWeb.Admin.HvhMatchupNewLive do
           <.link navigate={~p"/admin/eventos/#{@event.id}"} class="btn btn-ghost btn-sm gap-1 mb-4">
             <.icon name="hero-arrow-left" class="size-4" /> Volver al evento
           </.link>
-          <h1 class="text-3xl font-bold">Nuevo matchup HvH</h1>
+          <h1 class="text-3xl font-bold">Nuevo VS Macho vs Hembra</h1>
           <p class="text-base-content/60 mt-1">{@event.name}</p>
         </div>
 
@@ -41,10 +41,23 @@ defmodule BetPlaceWeb.Admin.HvhMatchupNewLive do
             <%= if @runners != [] do %>
               <form phx-submit="create" id="matchup-form">
                 <input type="hidden" name="race_id" value={@selected_race_id} />
+                <div class="mb-4">
+                  <label class="label">
+                    <span class="label-text font-medium">Porcentaje de pago (%)</span>
+                  </label>
+                  <input
+                    type="number"
+                    name="payout_pct"
+                    min="1"
+                    step="0.01"
+                    value="80"
+                    class="input input-bordered w-full"
+                  />
+                </div>
 
                 <div class="grid grid-cols-2 gap-6">
                   <div>
-                    <h3 class="font-semibold mb-3 text-center">🔵 Lado A</h3>
+                    <h3 class="font-semibold mb-3 text-center">🔵 Bloque Macho</h3>
                     <div class="space-y-2">
                       <label
                         :for={runner <- @runners}
@@ -64,7 +77,7 @@ defmodule BetPlaceWeb.Admin.HvhMatchupNewLive do
                     </div>
                   </div>
                   <div>
-                    <h3 class="font-semibold mb-3 text-center">🔴 Lado B</h3>
+                    <h3 class="font-semibold mb-3 text-center">🔴 Bloque Hembra</h3>
                     <div class="space-y-2">
                       <label
                         :for={runner <- @runners}
@@ -139,17 +152,20 @@ defmodule BetPlaceWeb.Admin.HvhMatchupNewLive do
     cond do
       side_a == [] or side_b == [] ->
         {:noreply,
-         put_flash(socket, :error, "Debes seleccionar al menos un caballo en cada lado.")}
+         put_flash(socket, :error, "Debes seleccionar al menos un ejemplar en cada bloque.")}
 
       Enum.any?(side_a, &(&1 in side_b)) ->
         {:noreply, put_flash(socket, :error, "Un caballo no puede estar en ambos lados.")}
 
       true ->
+        payout_pct = parse_decimal(params["payout_pct"], Decimal.new("80.00"))
+
         matchup_attrs = %{
           game_event_id: socket.assigns.event.id,
           race_id: race_id,
           created_by: socket.assigns.current_scope.user.id,
-          status: :open
+          status: :open,
+          payout_pct: payout_pct
         }
 
         case Betting.create_hvh_matchup_with_sides(matchup_attrs, side_a, side_b) do
@@ -162,6 +178,15 @@ defmodule BetPlaceWeb.Admin.HvhMatchupNewLive do
           {:error, _, _, _} ->
             {:noreply, put_flash(socket, :error, "Error al crear el matchup.")}
         end
+    end
+  end
+
+  defp parse_decimal(nil, default), do: default
+
+  defp parse_decimal(value, default) do
+    case Decimal.parse(to_string(value)) do
+      {decimal, ""} -> decimal
+      _ -> default
     end
   end
 end

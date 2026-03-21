@@ -30,6 +30,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
     if connected?(socket) do
       Process.send_after(self(), :tick, @tick_interval)
       Phoenix.PubSub.subscribe(BetPlace.PubSub, "game_event:#{event.id}")
+      Phoenix.PubSub.subscribe(BetPlace.PubSub, "user:#{socket.assigns.current_scope.user.id}")
     end
 
     user_id = socket.assigns.current_scope.user.id
@@ -50,6 +51,8 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
      |> assign(:show_my_tickets, false)
      |> assign(:expanded_combo_ids, MapSet.new())
      |> assign(:selected_tab, :polla)
+     |> assign(:show_hvh_confirm, false)
+     |> assign(:hvh_confirm_matchup_id, nil)
      |> assign(
        :my_polla_tickets,
        Betting.list_polla_tickets_for_user_and_event(user_id, event.id)
@@ -200,6 +203,15 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
   end
 
   def handle_event("place_hvh_bet", %{"matchup_id" => mid}, socket) do
+    {:noreply, socket |> assign(:show_hvh_confirm, true) |> assign(:hvh_confirm_matchup_id, mid)}
+  end
+
+  def handle_event("hide_hvh_confirm", _, socket) do
+    {:noreply, socket |> assign(:show_hvh_confirm, false) |> assign(:hvh_confirm_matchup_id, nil)}
+  end
+
+  def handle_event("confirm_hvh_bet", _, socket) do
+    mid = socket.assigns.hvh_confirm_matchup_id
     %{hvh_selections: hvh_selections, matchups: matchups, current_scope: scope} = socket.assigns
     sel = Map.get(hvh_selections, mid, %{})
     matchup = Enum.find(matchups, &(to_string(&1.id) == mid))
@@ -217,6 +229,8 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
 
           {:noreply,
            socket
+           |> assign(:show_hvh_confirm, false)
+           |> assign(:hvh_confirm_matchup_id, nil)
            |> assign(:hvh_selections, Map.delete(hvh_selections, mid))
            |> update(:current_scope, fn s -> %{s | user: updated_user} end)
            |> assign(
@@ -255,6 +269,44 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
 
   def handle_info({:game_event_update, event}, socket) do
     {:noreply, assign(socket, :event, event)}
+  end
+
+  def handle_info({:balance_updated, _new_balance}, socket) do
+    user_id = socket.assigns.current_scope.user.id
+
+    {:noreply,
+     socket
+     |> update(:current_scope, fn scope ->
+       %{scope | user: BetPlace.Accounts.get_user!(user_id)}
+     end)
+     |> assign(
+       :my_hvh_bets,
+       Betting.list_hvh_bets_for_user_and_event(user_id, socket.assigns.event.id)
+     )}
+  end
+
+  def handle_info({:hvh_matchup_settled, _matchup_id, _winning_side}, socket) do
+    user_id = socket.assigns.current_scope.user.id
+
+    {:noreply,
+     socket
+     |> assign(:matchups, Betting.list_hvh_matchups_for_event(socket.assigns.event.id))
+     |> assign(
+       :my_hvh_bets,
+       Betting.list_hvh_bets_for_user_and_event(user_id, socket.assigns.event.id)
+     )}
+  end
+
+  def handle_info({:hvh_matchup_voided, _matchup_id}, socket) do
+    user_id = socket.assigns.current_scope.user.id
+
+    {:noreply,
+     socket
+     |> assign(:matchups, Betting.list_hvh_matchups_for_event(socket.assigns.event.id))
+     |> assign(
+       :my_hvh_bets,
+       Betting.list_hvh_bets_for_user_and_event(user_id, socket.assigns.event.id)
+     )}
   end
 
   # ── Template ──────────────────────────────────────────────────────────────
@@ -516,7 +568,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                         phx-value-side="a"
                         disabled={matchup.status != :open}
                       >
-                        <span class="text-xs font-bold uppercase tracking-wider">Lado A</span>
+                        <span class="text-xs font-bold uppercase tracking-wider">Macho</span>
                         <span
                           :for={side <- Enum.filter(matchup.hvh_matchup_sides, &(&1.side == :a))}
                           class="text-sm font-normal"
@@ -538,7 +590,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                         phx-value-side="b"
                         disabled={matchup.status != :open}
                       >
-                        <span class="text-xs font-bold uppercase tracking-wider">Lado B</span>
+                        <span class="text-xs font-bold uppercase tracking-wider">Hembra</span>
                         <span
                           :for={side <- Enum.filter(matchup.hvh_matchup_sides, &(&1.side == :b))}
                           class="text-sm font-normal"
@@ -565,7 +617,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                         />
                       </div>
                       <div class="text-xs text-base-content/60 shrink-0">
-                        × {format_decimal(@event.game_config.prize_multiplier || Decimal.new("1.80"))}
+                        × {format_decimal(Betting.payout_multiplier_for_matchup(matchup))}
                       </div>
                       <button
                         class="btn btn-sm btn-accent shrink-0"
@@ -577,12 +629,29 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                     </div>
 
                     <div class="flex gap-4 mt-2 text-xs text-base-content/50">
-                      <span>Lado A: ${format_decimal(matchup.total_side_a)}</span>
-                      <span>Lado B: ${format_decimal(matchup.total_side_b)}</span>
+                      <span>Macho: ${format_decimal(matchup.total_side_a)}</span>
+                      <span>Hembra: ${format_decimal(matchup.total_side_b)}</span>
                     </div>
                   </div>
                 </div>
               </div>
+            </div>
+            <div :if={@show_hvh_confirm} class="modal modal-open">
+              <div class="modal-box">
+                <h3 class="font-bold text-lg">Confirmar apuesta VS</h3>
+                <p class="py-3">
+                  ¿Desea apostar
+                  <strong>
+                    {hvh_confirm_side_label(@hvh_selections, @hvh_confirm_matchup_id)}
+                  </strong>
+                  por un monto de <strong>${hvh_confirm_amount(@hvh_selections, @hvh_confirm_matchup_id)}</strong>?
+                </p>
+                <div class="modal-action">
+                  <button class="btn" phx-click="hide_hvh_confirm">Cancelar</button>
+                  <button class="btn btn-primary" phx-click="confirm_hvh_bet">Confirmar</button>
+                </div>
+              </div>
+              <div class="modal-backdrop" phx-click="hide_hvh_confirm"></div>
             </div>
           </div>
 
@@ -820,7 +889,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                         do: "badge badge-primary badge-sm",
                         else: "badge badge-secondary badge-sm"
                     }>
-                      {if bet.side_chosen == :a, do: "Lado A", else: "Lado B"}
+                      {if bet.side_chosen == :a, do: "Macho", else: "Hembra"}
                     </span>
                     <span class="font-medium">${format_decimal(bet.amount)}</span>
                     <span class="text-base-content/60 text-xs">
@@ -1020,4 +1089,18 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
   defp leaderboard_num_races([row | _]), do: length(row.races)
 
   defp leaderboard_total_combos(rows), do: length(rows)
+
+  defp hvh_confirm_side_label(hvh_selections, matchup_id) do
+    case hvh_selections |> Map.get(matchup_id || "", %{}) |> Map.get(:side) do
+      :a -> "Macho"
+      :b -> "Hembra"
+      _ -> "—"
+    end
+  end
+
+  defp hvh_confirm_amount(hvh_selections, matchup_id) do
+    hvh_selections
+    |> Map.get(matchup_id || "", %{})
+    |> Map.get(:amount, "0")
+  end
 end
