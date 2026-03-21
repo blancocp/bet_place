@@ -16,7 +16,19 @@ defmodule BetPlaceWeb.Bettor.MyTicketsLive do
     {:ok,
      socket
      |> assign(:polla_tickets, polla_tickets)
-     |> assign(:hvh_bets, hvh_bets)}
+     |> assign(:hvh_bets, hvh_bets)
+     |> assign(:expanded_combo_ids, MapSet.new())}
+  end
+
+  def handle_event("toggle_combo_detail", %{"combo_id" => combo_id}, socket) do
+    ids = socket.assigns.expanded_combo_ids
+
+    new_ids =
+      if MapSet.member?(ids, combo_id),
+        do: MapSet.delete(ids, combo_id),
+        else: MapSet.put(ids, combo_id)
+
+    {:noreply, assign(socket, :expanded_combo_ids, new_ids)}
   end
 
   def handle_info({:balance_updated, _new_balance}, socket) do
@@ -47,44 +59,93 @@ defmodule BetPlaceWeb.Bettor.MyTicketsLive do
             No tienes tickets registrados.
           </div>
 
-          <div class="overflow-x-auto">
-            <table :if={@polla_tickets != []} class="table table-zebra w-full">
-              <thead>
-                <tr>
-                  <th>Evento</th>
-                  <th>Combinaciones</th>
-                  <th>Total pagado</th>
-                  <th>Puntos</th>
-                  <th>Premio</th>
-                  <th>Estado</th>
-                  <th>Fecha</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr :for={ticket <- @polla_tickets}>
-                  <td class="font-medium">
-                    <.link navigate={~p"/eventos/#{ticket.game_event_id}"} class="link link-hover">
-                      {ticket.game_event.name}
-                    </.link>
-                  </td>
-                  <td>{ticket.combination_count}</td>
-                  <td>${format_decimal(ticket.total_paid)}</td>
-                  <td>{ticket.total_points || "—"}</td>
-                  <td>
-                    <span :if={ticket.status == :winner} class="text-success font-bold">
-                      ${format_decimal(best_prize(ticket))}
-                    </span>
-                    <span :if={ticket.status != :winner}>—</span>
-                  </td>
-                  <td>
+          <div :if={@polla_tickets != []} class="space-y-6">
+            <div
+              :for={ticket <- @polla_tickets}
+              class="card bg-base-100 border border-base-200 shadow-sm"
+            >
+              <div class="card-body p-4">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <.link
+                    navigate={~p"/eventos/#{ticket.game_event_id}"}
+                    class="link link-hover font-semibold"
+                  >
+                    {ticket.game_event.name}
+                  </.link>
+                  <div class="flex items-center gap-2">
                     <span class={polla_status_badge(ticket.status)}>
                       {polla_status_label(ticket.status)}
                     </span>
-                  </td>
-                  <td class="text-xs text-base-content/60">{format_date(ticket.inserted_at)}</td>
-                </tr>
-              </tbody>
-            </table>
+                    <span class="text-sm text-base-content/60">
+                      {format_date(ticket.inserted_at)}
+                    </span>
+                  </div>
+                </div>
+                <div class="flex flex-wrap gap-4 text-sm mb-3">
+                  <span>{ticket.combination_count} combinaciones</span>
+                  <span>${format_decimal(ticket.total_paid)} pagado</span>
+                  <span :if={ticket.total_points}>Total: {ticket.total_points} pts</span>
+                  <span :if={ticket.status == :winner} class="text-success font-bold">
+                    Premio: ${format_decimal(best_prize(ticket))}
+                  </span>
+                </div>
+                <% points_lookup = selection_points_lookup(ticket) %>
+                <div class="space-y-2">
+                  <div
+                    :for={combo <- combo_cards_for_ticket(ticket)}
+                    class="rounded-lg border border-base-200 bg-base-200/50 p-3"
+                  >
+                    <div
+                      class="flex items-center justify-between gap-2 cursor-pointer"
+                      phx-click="toggle_combo_detail"
+                      phx-value-combo_id={combo.id}
+                    >
+                      <span class="font-mono font-semibold">{combo_string(combo)}</span>
+                      <div class="flex items-center gap-2">
+                        <span class="badge badge-ghost badge-sm">{combo.total_points} pts</span>
+                        <span
+                          :if={combo.is_winner && combo.prize_amount}
+                          class="text-success font-bold text-xs"
+                        >
+                          ${format_decimal(combo.prize_amount)}
+                        </span>
+                        <.icon
+                          name={
+                            if MapSet.member?(@expanded_combo_ids, combo.id),
+                              do: "hero-chevron-up",
+                              else: "hero-chevron-down"
+                          }
+                          class="w-4 h-4 text-base-content/40"
+                        />
+                      </div>
+                    </div>
+                    <div
+                      :if={MapSet.member?(@expanded_combo_ids, combo.id)}
+                      class="mt-3 pt-3 border-t border-base-300"
+                    >
+                      <p class="text-xs text-base-content/50 uppercase tracking-wide mb-2">
+                        Detalle por válida
+                      </p>
+                      <div class="grid grid-cols-3 gap-x-4 gap-y-1 text-xs">
+                        <div :for={cs <- combo_selections_sorted(combo)} class="flex justify-between">
+                          <span class="text-base-content/60">{cs.game_event_race.race_order}V</span>
+                          <span class="font-medium">{cs.runner.program_number}</span>
+                          <span class={
+                            points_result_class(
+                              Map.get(points_lookup, {cs.game_event_race_id, cs.runner_id}, 0)
+                            )
+                          }>
+                            {points_to_result(
+                              Map.get(points_lookup, {cs.game_event_race_id, cs.runner_id}, 0)
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -185,4 +246,36 @@ defmodule BetPlaceWeb.Bettor.MyTicketsLive do
   defp hvh_bet_status_label(:void), do: "Nulo"
   defp hvh_bet_status_label(:refunded), do: "Reembolsado"
   defp hvh_bet_status_label(_), do: "—"
+
+  defp selection_points_lookup(ticket) do
+    Map.new(ticket.polla_selections || [], fn s ->
+      {{s.game_event_race_id, s.runner_id}, s.points_earned}
+    end)
+  end
+
+  defp combo_cards_for_ticket(ticket) do
+    (ticket.polla_combinations || []) |> Enum.sort_by(& &1.combination_index)
+  end
+
+  defp combo_string(combo) do
+    sorted = combo_selections_sorted(combo)
+
+    if sorted == [],
+      do: "—",
+      else: Enum.map_join(sorted, "-", fn cs -> to_string(cs.runner.program_number) end)
+  end
+
+  defp combo_selections_sorted(combo) do
+    Enum.sort_by(combo.polla_combination_selections || [], & &1.game_event_race.race_order)
+  end
+
+  defp points_to_result(5), do: "1º"
+  defp points_to_result(3), do: "2º"
+  defp points_to_result(1), do: "3º"
+  defp points_to_result(_), do: "X"
+
+  defp points_result_class(5), do: "text-success font-medium"
+  defp points_result_class(3), do: "text-info font-medium"
+  defp points_result_class(1), do: "text-warning font-medium"
+  defp points_result_class(_), do: "text-base-content/40"
 end

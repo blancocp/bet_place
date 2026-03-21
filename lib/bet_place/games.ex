@@ -46,10 +46,28 @@ defmodule BetPlace.Games do
     |> Repo.all()
   end
 
+  def list_recent_finished_game_events(limit \\ 20) when is_integer(limit) and limit > 0 do
+    GameEvent
+    |> where([ge], ge.status == :finished)
+    |> order_by([ge], desc: ge.betting_closes_at)
+    |> limit(^limit)
+    |> preload([:game_type, :course])
+    |> Repo.all()
+  end
+
+  def get_last_finished_game_event do
+    GameEvent
+    |> where([ge], ge.status == :finished)
+    |> order_by([ge], desc: ge.betting_closes_at)
+    |> limit(1)
+    |> preload([:game_type, :course])
+    |> Repo.one()
+  end
+
   def list_open_game_events do
     GameEvent
     |> where([ge], ge.status in [:open, :closed])
-    |> order_by([ge], ge.betting_closes_at)
+    |> order_by([ge], desc: ge.betting_closes_at)
     |> preload([:game_type, :course])
     |> Repo.all()
   end
@@ -69,7 +87,19 @@ defmodule BetPlace.Games do
   end
 
   def update_game_event_status(%GameEvent{} = event, status) do
-    event |> GameEvent.status_changeset(status) |> Repo.update()
+    case event |> GameEvent.status_changeset(status) |> Repo.update() do
+      {:ok, updated} ->
+        Phoenix.PubSub.broadcast(
+          BetPlace.PubSub,
+          "game_events",
+          {:game_event_status_changed, updated.id}
+        )
+
+        {:ok, updated}
+
+      {:error, _} = err ->
+        err
+    end
   end
 
   # ── GameEventRace ─────────────────────────────────────────────────────────

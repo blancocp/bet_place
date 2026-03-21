@@ -224,6 +224,10 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
   end
 
   def mount(_params, _session, socket) do
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(BetPlace.PubSub, "sync_admin")
+    end
+
     stats = load_stats()
     auto_sync_enabled = SyncSettings.auto_sync_enabled?()
     today = Date.to_string(Date.utc_today())
@@ -240,6 +244,44 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
        sync_date: today,
        api_usage: api_usage
      )}
+  end
+
+  def handle_info({:sync_completed, payload}, socket) do
+    stats = load_stats()
+
+    api_usage = %{
+      today: ApiSyncLog.requests_today(),
+      month: ApiSyncLog.requests_this_month()
+    }
+
+    socket = assign(socket, stats: stats, api_usage: api_usage)
+
+    msg =
+      case payload do
+        %{kind: kind, target: target, result: result} ->
+          label =
+            case kind do
+              :racecards -> "Racecards"
+              :results -> "Resultados"
+              :event -> "Evento"
+              :all -> "Sync"
+              _ -> "Sync"
+            end
+
+          target_str = if is_binary(target), do: target, else: to_string(target)
+
+          case result do
+            {:ok, _} -> {:info, "#{label} completado (#{target_str})."}
+            :no_change -> {:info, "#{label}: sin cambios (#{target_str})."}
+            {:error, _} -> {:error, "#{label} terminó con errores (#{target_str}). Revisa logs."}
+            _ -> {:info, "#{label} completado (#{target_str})."}
+          end
+
+        _ ->
+          {:info, "Sync completado."}
+      end
+
+    {:noreply, put_flash(socket, elem(msg, 0), elem(msg, 1))}
   end
 
   def handle_event("set_sync_date", %{"sync_date" => date}, socket) do

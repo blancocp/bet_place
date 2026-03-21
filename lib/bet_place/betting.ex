@@ -16,6 +16,7 @@ defmodule BetPlace.Betting do
 
   alias BetPlace.Accounts.User
   alias BetPlace.Finance.Transaction
+  alias BetPlace.Games
   alias BetPlace.Games.GameEvent
 
   # ── Place Polla Ticket (Ecto.Multi) ───────────────────────────────────────
@@ -174,11 +175,91 @@ defmodule BetPlace.Betting do
     |> Repo.all()
   end
 
+  @doc """
+  Returns leaderboard rows for a finished event: one row per combination with
+  username, combination_index, per-race selection (program_number) and points, and total_points.
+  Sorted by total_points descending.
+  """
+  def list_leaderboard_rows(game_event_id) do
+    ordered_races = Games.list_game_event_races(game_event_id)
+
+    tickets =
+      PollaTicket
+      |> where([pt], pt.game_event_id == ^game_event_id)
+      |> preload([
+        :user,
+        polla_selections: [game_event_race: [], runner: []],
+        polla_combinations: [polla_combination_selections: [game_event_race: [], runner: []]]
+      ])
+      |> Repo.all()
+
+    rows =
+      for ticket <- tickets,
+          combo <- Enum.sort_by(ticket.polla_combinations || [], & &1.combination_index),
+          do: build_leaderboard_row(ticket, combo, ordered_races)
+
+    Enum.sort_by(rows, & &1.total_points, :desc)
+  end
+
+  def get_polla_event_counts(game_event_id) do
+    ticket_count =
+      PollaTicket
+      |> where([pt], pt.game_event_id == ^game_event_id)
+      |> select([pt], count(pt.id))
+      |> Repo.one()
+
+    combination_count =
+      PollaCombination
+      |> join(:inner, [pc], pt in assoc(pc, :polla_ticket))
+      |> where([pc, pt], pt.game_event_id == ^game_event_id)
+      |> select([pc, _pt], count(pc.id))
+      |> Repo.one()
+
+    %{ticket_count: ticket_count || 0, combination_count: combination_count || 0}
+  end
+
+  defp build_leaderboard_row(ticket, combo, ordered_races) do
+    points_lookup =
+      Map.new(ticket.polla_selections || [], fn s ->
+        {{s.game_event_race_id, s.runner_id}, s.points_earned}
+      end)
+
+    selections_sorted =
+      (combo.polla_combination_selections || [])
+      |> Enum.sort_by(& &1.game_event_race.race_order)
+
+    races =
+      for ger <- ordered_races do
+        cs = Enum.find(selections_sorted, &(&1.game_event_race_id == ger.id))
+
+        {selection, points} =
+          if cs do
+            {cs.runner.program_number,
+             Map.get(points_lookup, {cs.game_event_race_id, cs.runner_id}, 0)}
+          else
+            {nil, 0}
+          end
+
+        %{selection: selection, points: points}
+      end
+
+    %{
+      username: ticket.user.username,
+      combination_index: combo.combination_index,
+      total_points: combo.total_points || 0,
+      races: races
+    }
+  end
+
   def list_polla_tickets_for_user(user_id) do
     PollaTicket
     |> where([pt], pt.user_id == ^user_id)
     |> order_by([pt], desc: pt.inserted_at)
-    |> preload([:game_event, :polla_combinations])
+    |> preload([
+      :game_event,
+      polla_selections: [game_event_race: [], runner: []],
+      polla_combinations: [polla_combination_selections: [game_event_race: [], runner: []]]
+    ])
     |> Repo.all()
   end
 
@@ -388,7 +469,11 @@ defmodule BetPlace.Betting do
     PollaTicket
     |> where([pt], pt.user_id == ^user_id and pt.game_event_id == ^event_id)
     |> order_by([pt], desc: pt.inserted_at)
-    |> preload(polla_selections: [game_event_race: :race, runner: [:horse]])
+    |> preload([
+      :game_event,
+      polla_selections: [game_event_race: :race, runner: [:horse]],
+      polla_combinations: [polla_combination_selections: [game_event_race: [], runner: []]]
+    ])
     |> Repo.all()
   end
 
