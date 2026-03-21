@@ -8,7 +8,10 @@ defmodule BetPlaceWeb.Bettor.GameEventListLive do
   def mount(_params, _session, socket) do
     events = Games.list_open_game_events()
 
-    if connected?(socket), do: Process.send_after(self(), :refresh, @tick_interval)
+    if connected?(socket) do
+      Process.send_after(self(), :refresh, @tick_interval)
+      Phoenix.PubSub.subscribe(BetPlace.PubSub, "game_events")
+    end
 
     {:ok, stream(socket, :events, events)}
   end
@@ -19,11 +22,21 @@ defmodule BetPlaceWeb.Bettor.GameEventListLive do
     {:noreply, stream(socket, :events, events, reset: true)}
   end
 
+  def handle_info({:game_event_status_changed, _event_id}, socket) do
+    events = Games.list_open_game_events()
+    {:noreply, stream(socket, :events, events, reset: true)}
+  end
+
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
       <div>
-        <h1 class="text-2xl font-bold mb-6">Eventos disponibles</h1>
+        <div class="flex items-center justify-between gap-3 mb-6">
+          <h1 class="text-2xl font-bold">Eventos disponibles</h1>
+          <.link navigate={~p"/historial"} class="btn btn-ghost btn-sm gap-1">
+            <.icon name="hero-clock" class="size-4" /> Historial
+          </.link>
+        </div>
 
         <div id="events" phx-update="stream" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div class="hidden only:block col-span-full text-base-content/50 text-center py-16">

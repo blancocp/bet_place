@@ -11,21 +11,45 @@ defmodule BetPlaceWeb.Bettor.BettingHistoryLive do
   def mount(_params, _session, socket) do
     user_id = socket.assigns.current_scope.user.id
 
-    polla_all = Betting.list_polla_tickets_for_user(user_id)
     hvh_all = Betting.list_hvh_bets_for_user(user_id)
-    events = Games.list_game_events()
+    finished_events = Games.list_recent_finished_game_events(20)
+    selected_event = Games.get_last_finished_game_event()
+    selected_event_id = if selected_event, do: selected_event.id, else: nil
+
+    my_polla_tickets =
+      if selected_event_id do
+        Betting.list_polla_tickets_for_user_and_event(user_id, selected_event_id)
+      else
+        []
+      end
+
+    leaderboard_rows =
+      if selected_event_id do
+        Betting.list_leaderboard_rows(selected_event_id)
+      else
+        []
+      end
+
+    counts =
+      if selected_event_id do
+        Betting.get_polla_event_counts(selected_event_id)
+      else
+        %{ticket_count: 0, combination_count: 0}
+      end
 
     {:ok,
      socket
      |> assign(:tab, :polla)
-     |> assign(:polla_all, polla_all)
      |> assign(:hvh_all, hvh_all)
-     |> assign(:events, events)
-     |> assign(:filter_event, "")
-     |> assign(:filter_status, "")
      |> assign(:polla_statuses, @polla_statuses)
      |> assign(:hvh_statuses, @hvh_statuses)
-     |> apply_filters()}
+     |> assign(:finished_events, finished_events)
+     |> assign(:selected_event, selected_event)
+     |> assign(:selected_event_id, selected_event_id)
+     |> assign(:my_polla_tickets, my_polla_tickets)
+     |> assign(:leaderboard_rows, leaderboard_rows)
+     |> assign(:polla_counts, counts)
+     |> assign(:hvh_bets, hvh_all)}
   end
 
   # ── Events ─────────────────────────────────────────────────────────────────
@@ -34,57 +58,43 @@ defmodule BetPlaceWeb.Bettor.BettingHistoryLive do
     {:noreply, assign(socket, :tab, String.to_existing_atom(tab))}
   end
 
-  def handle_event("filter", params, socket) do
+  def handle_event("select_event", %{"event_id" => event_id}, socket) do
+    user_id = socket.assigns.current_scope.user.id
+
+    selected_event =
+      Enum.find(socket.assigns.finished_events, fn e -> to_string(e.id) == event_id end)
+
+    selected_event_id = selected_event && selected_event.id
+
+    my_polla_tickets =
+      if selected_event_id do
+        Betting.list_polla_tickets_for_user_and_event(user_id, selected_event_id)
+      else
+        []
+      end
+
+    leaderboard_rows =
+      if selected_event_id do
+        Betting.list_leaderboard_rows(selected_event_id)
+      else
+        []
+      end
+
+    counts =
+      if selected_event_id do
+        Betting.get_polla_event_counts(selected_event_id)
+      else
+        %{ticket_count: 0, combination_count: 0}
+      end
+
     {:noreply,
      socket
-     |> assign(:filter_event, params["event_id"] || socket.assigns.filter_event)
-     |> assign(:filter_status, params["status"] || socket.assigns.filter_status)
-     |> apply_filters()}
+     |> assign(:selected_event, selected_event)
+     |> assign(:selected_event_id, selected_event_id)
+     |> assign(:my_polla_tickets, my_polla_tickets)
+     |> assign(:leaderboard_rows, leaderboard_rows)
+     |> assign(:polla_counts, counts)}
   end
-
-  def handle_event("clear_filters", _, socket) do
-    {:noreply,
-     socket
-     |> assign(:filter_event, "")
-     |> assign(:filter_status, "")
-     |> apply_filters()}
-  end
-
-  # ── Filter logic ───────────────────────────────────────────────────────────
-
-  defp apply_filters(socket) do
-    %{polla_all: polla_all, hvh_all: hvh_all, filter_event: event_id, filter_status: status} =
-      socket.assigns
-
-    polla_filtered =
-      polla_all
-      |> filter_polla_by_event(event_id)
-      |> filter_by_status(status)
-
-    hvh_filtered =
-      hvh_all
-      |> filter_hvh_by_event(event_id)
-      |> filter_by_status(status)
-
-    socket
-    |> assign(:polla_tickets, polla_filtered)
-    |> assign(:hvh_bets, hvh_filtered)
-  end
-
-  defp filter_polla_by_event(list, ""), do: list
-
-  defp filter_polla_by_event(list, id),
-    do: Enum.filter(list, &(to_string(&1.game_event_id) == id))
-
-  defp filter_hvh_by_event(list, ""), do: list
-
-  defp filter_hvh_by_event(list, id),
-    do: Enum.filter(list, &(to_string(&1.hvh_matchup.game_event_id) == id))
-
-  defp filter_by_status(list, ""), do: list
-
-  defp filter_by_status(list, s),
-    do: Enum.filter(list, &(to_string(&1.status) == s))
 
   # ── Render ─────────────────────────────────────────────────────────────────
 
@@ -97,7 +107,7 @@ defmodule BetPlaceWeb.Bettor.BettingHistoryLive do
           <div>
             <h1 class="text-3xl font-bold">Historial de apuestas</h1>
             <p class="text-base-content/60 mt-1">
-              {length(@polla_all)} tickets polla · {length(@hvh_all)} apuestas HvH
+              {length(@my_polla_tickets)} tickets (evento) · {length(@hvh_all)} apuestas HvH
             </p>
           </div>
           <.link navigate={~p"/eventos"} class="btn btn-ghost btn-sm gap-1">
@@ -105,53 +115,31 @@ defmodule BetPlaceWeb.Bettor.BettingHistoryLive do
           </.link>
         </div>
 
-        <%!-- Filtros --%>
-        <div class="card bg-base-100 border border-base-200 shadow-sm mb-6">
+        <%!-- Selector de evento finalizado (Polla) --%>
+        <div :if={@tab == :polla} class="card bg-base-100 border border-base-200 shadow-sm mb-6">
           <div class="card-body p-4">
-            <form phx-change="filter" class="flex flex-col sm:flex-row gap-3">
-              <select name="event_id" class="select select-bordered select-sm flex-1">
-                <option value="">Todos los eventos</option>
-                <option
-                  :for={e <- @events}
-                  value={e.id}
-                  selected={@filter_event == to_string(e.id)}
+            <div class="flex flex-col sm:flex-row gap-3 sm:items-end">
+              <div class="flex-1">
+                <label class="label text-xs pb-1">Evento finalizado</label>
+                <select
+                  class="select select-bordered select-sm w-full"
+                  phx-change="select_event"
+                  name="event_id"
                 >
-                  {e.name}
-                </option>
-              </select>
-
-              <div class="flex gap-2">
-                <select name="status" class="select select-bordered select-sm flex-1">
-                  <option value="">Todos los estados</option>
-                  <%= if @tab == :polla do %>
-                    <option
-                      :for={s <- @polla_statuses}
-                      value={s}
-                      selected={@filter_status == to_string(s)}
-                    >
-                      {polla_label(s)}
-                    </option>
-                  <% else %>
-                    <option
-                      :for={s <- @hvh_statuses}
-                      value={s}
-                      selected={@filter_status == to_string(s)}
-                    >
-                      {hvh_label(s)}
-                    </option>
-                  <% end %>
+                  <option :if={@finished_events == []} value="">No hay eventos finalizados</option>
+                  <option
+                    :for={e <- @finished_events}
+                    value={e.id}
+                    selected={@selected_event_id == e.id}
+                  >
+                    {e.name}
+                  </option>
                 </select>
-                <button
-                  :if={@filter_event != "" or @filter_status != ""}
-                  type="button"
-                  phx-click="clear_filters"
-                  class="btn btn-ghost btn-sm"
-                  title="Limpiar filtros"
-                >
-                  <.icon name="hero-x-mark" class="size-4" />
-                </button>
               </div>
-            </form>
+              <div class="text-xs text-base-content/60">
+                <span :if={@selected_event}>Curso: {@selected_event.course.full_name}</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -163,12 +151,7 @@ defmodule BetPlaceWeb.Bettor.BettingHistoryLive do
             phx-click="switch_tab"
             phx-value-tab="polla"
           >
-            La Polla Hípica
-            <span class="badge badge-sm ml-2">
-              {length(@polla_tickets)}{if length(@polla_tickets) != length(@polla_all),
-                do: "/#{length(@polla_all)}",
-                else: ""}
-            </span>
+            La Polla Hípica <span class="badge badge-sm ml-2">{length(@my_polla_tickets)}</span>
           </button>
           <button
             role="tab"
@@ -176,95 +159,127 @@ defmodule BetPlaceWeb.Bettor.BettingHistoryLive do
             phx-click="switch_tab"
             phx-value-tab="hvh"
           >
-            Horse vs Horse
-            <span class="badge badge-sm ml-2">
-              {length(@hvh_bets)}{if length(@hvh_bets) != length(@hvh_all),
-                do: "/#{length(@hvh_all)}",
-                else: ""}
-            </span>
+            Horse vs Horse <span class="badge badge-sm ml-2">{length(@hvh_bets)}</span>
           </button>
         </div>
 
-        <%!-- Polla Tickets --%>
         <div :if={@tab == :polla}>
-          <div :if={@polla_tickets == []} class="text-center text-base-content/50 py-16">
-            {if @filter_event != "" or @filter_status != "",
-              do: "Sin resultados para los filtros aplicados.",
-              else: "Aún no tienes tickets registrados."}
-          </div>
+          <%!-- Mis tickets (solo evento seleccionado) --%>
+          <section class="mb-8">
+            <div class="flex items-center justify-between mb-3">
+              <h2 class="text-lg font-semibold">Mis tickets</h2>
+              <span class="badge badge-ghost badge-sm">
+                {@polla_counts.ticket_count} selladas · {@polla_counts.combination_count} combinaciones
+              </span>
+            </div>
 
-          <div class="space-y-4">
-            <div
-              :for={ticket <- @polla_tickets}
-              class="card bg-base-100 border border-base-200 shadow-sm"
-            >
-              <div class="card-body p-4">
-                <%!-- Ticket header --%>
-                <div class="flex items-start justify-between gap-2 mb-3">
-                  <div>
-                    <.link
-                      navigate={~p"/eventos/#{ticket.game_event_id}"}
-                      class="font-bold link link-hover"
-                    >
-                      {ticket.game_event.name}
-                    </.link>
-                    <p class="text-xs text-base-content/50 mt-0.5">
-                      #{String.slice(ticket.id, 0, 8)} · {format_dt(ticket.inserted_at)}
-                    </p>
-                  </div>
-                  <span class={polla_badge(ticket.status)}>{polla_label(ticket.status)}</span>
-                </div>
+            <div :if={@my_polla_tickets == []} class="text-center text-base-content/50 py-10">
+              {if @selected_event,
+                do: "No tienes tickets en este evento.",
+                else: "Selecciona un evento finalizado."}
+            </div>
 
-                <%!-- Stats row --%>
-                <div class="flex flex-wrap gap-4 text-sm mb-3">
-                  <div>
-                    <span class="text-base-content/60">Combinaciones</span>
-                    <span class="font-bold ml-1">{ticket.combination_count}</span>
+            <div :if={@my_polla_tickets != []} class="space-y-4">
+              <div
+                :for={ticket <- @my_polla_tickets}
+                class="card bg-base-100 border border-base-200 shadow-sm"
+              >
+                <div class="card-body p-4">
+                  <div class="flex items-start justify-between gap-2 mb-3">
+                    <div>
+                      <.link
+                        navigate={~p"/eventos/#{ticket.game_event_id}"}
+                        class="font-bold link link-hover"
+                      >
+                        {ticket.game_event.name}
+                      </.link>
+                      <p class="text-xs text-base-content/50 mt-0.5">
+                        #{String.slice(ticket.id, 0, 8)} · {format_dt(ticket.inserted_at)}
+                      </p>
+                    </div>
+                    <span class={polla_badge(ticket.status)}>{polla_label(ticket.status)}</span>
                   </div>
-                  <div>
-                    <span class="text-base-content/60">Total pagado</span>
-                    <span class="font-bold ml-1">${format_decimal(ticket.total_paid)}</span>
-                  </div>
-                  <div :if={ticket.total_points}>
-                    <span class="text-base-content/60">Puntos</span>
-                    <span class="font-bold ml-1">{ticket.total_points}</span>
-                  </div>
-                  <div :if={ticket.rank}>
-                    <span class="text-base-content/60">Rank</span>
-                    <span class="font-bold ml-1">#{ticket.rank}</span>
-                  </div>
-                </div>
 
-                <%!-- Combinations detail --%>
-                <div :if={ticket.polla_combinations != []} class="space-y-1">
-                  <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide mb-1">
-                    Combinaciones
-                  </p>
-                  <div
-                    :for={combo <- Enum.sort_by(ticket.polla_combinations, & &1.inserted_at)}
-                    class={[
-                      "flex items-center justify-between text-xs px-2 py-1 rounded",
-                      if(combo.is_winner,
-                        do: "bg-success/10 border border-success/30",
-                        else: "bg-base-200"
-                      )
-                    ]}
-                  >
-                    <span class="font-mono text-base-content/60">
-                      #{String.slice(combo.id, 0, 6)}
-                    </span>
-                    <span :if={combo.points} class="font-medium">{combo.points} pts</span>
-                    <span :if={combo.is_winner} class="text-success font-bold">
-                      ${format_decimal(combo.prize_amount)}
-                    </span>
-                    <span :if={!combo.is_winner and combo.points} class="text-base-content/40">
-                      Sin premio
-                    </span>
+                  <div class="flex flex-wrap gap-4 text-sm">
+                    <div>
+                      <span class="text-base-content/60">Combinaciones</span>
+                      <span class="font-bold ml-1">{ticket.combination_count}</span>
+                    </div>
+                    <div>
+                      <span class="text-base-content/60">Total pagado</span>
+                      <span class="font-bold ml-1">${format_decimal(ticket.total_paid)}</span>
+                    </div>
+                    <div :if={ticket.total_points}>
+                      <span class="text-base-content/60">Puntos</span>
+                      <span class="font-bold ml-1">{ticket.total_points}</span>
+                    </div>
+                    <div :if={ticket.rank}>
+                      <span class="text-base-content/60">Rank</span>
+                      <span class="font-bold ml-1">#{ticket.rank}</span>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
+          </section>
+
+          <%!-- Resumen global (todos los bettors) --%>
+          <section>
+            <h2 class="text-lg font-semibold mb-3">Resumen del evento (todos)</h2>
+
+            <div :if={@leaderboard_rows == []} class="text-center text-base-content/50 py-10">
+              {if @selected_event,
+                do: "Aún no hay resultados para este evento.",
+                else: "Selecciona un evento finalizado."}
+            </div>
+
+            <div
+              :if={@leaderboard_rows != []}
+              class="overflow-x-auto rounded-lg border border-base-200"
+            >
+              <table class="table table-zebra table-sm w-full">
+                <thead>
+                  <tr>
+                    <th class="sticky left-0 bg-base-200 z-10">Usuario</th>
+                    <th
+                      :for={i <- 1..leaderboard_num_races(@leaderboard_rows)}
+                      class="text-center"
+                      colspan="2"
+                    >
+                      C{i}
+                    </th>
+                    <th class="text-center font-bold">Total</th>
+                  </tr>
+                  <tr>
+                    <th class="sticky left-0 bg-base-200 z-10"></th>
+                    <th
+                      :for={_i <- 1..leaderboard_num_races(@leaderboard_rows)}
+                      class="text-center text-xs"
+                    >
+                      E
+                    </th>
+                    <th
+                      :for={_i <- 1..leaderboard_num_races(@leaderboard_rows)}
+                      class="text-center text-xs"
+                    >
+                      Pt
+                    </th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr :for={row <- @leaderboard_rows}>
+                    <td class="font-medium sticky left-0 bg-base-100 z-10">{row.username}</td>
+                    <%= for r <- row.races do %>
+                      <td class="text-center text-sm">{r.selection || "—"}</td>
+                      <td class="text-center text-sm">{r.points}</td>
+                    <% end %>
+                    <td class="text-center font-bold">{row.total_points}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
 
         <%!-- HvH Bets --%>
@@ -358,4 +373,7 @@ defmodule BetPlaceWeb.Bettor.BettingHistoryLive do
   defp hvh_label(:void), do: "Nulo"
   defp hvh_label(:refunded), do: "Reembolsado"
   defp hvh_label(_), do: "—"
+
+  defp leaderboard_num_races([]), do: 0
+  defp leaderboard_num_races([row | _]), do: length(row.races)
 end
