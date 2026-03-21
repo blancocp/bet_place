@@ -60,6 +60,8 @@ defmodule BetPlaceWeb.Router do
       live "/eventos/:id", Bettor.GameEventShowLive
       live "/mis-tickets", Bettor.MyTicketsLive
       live "/historial", Bettor.BettingHistoryLive
+      live "/mi-perfil", Bettor.ProfileLive
+      live "/pagos", Bettor.PaymentsLive
     end
   end
 
@@ -77,6 +79,7 @@ defmodule BetPlaceWeb.Router do
       live "/usuarios", UserListLive
       live "/tickets", TicketsLive
       live "/api-usage", ApiUsageLive
+      live "/pagos", PaymentReviewsLive
     end
   end
 

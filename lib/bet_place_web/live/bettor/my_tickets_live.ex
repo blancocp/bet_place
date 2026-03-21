@@ -34,8 +34,11 @@ defmodule BetPlaceWeb.Bettor.MyTicketsLive do
   def handle_info({:balance_updated, _new_balance}, socket) do
     user_id = socket.assigns.current_scope.user.id
 
+    updated_user = BetPlace.Accounts.get_user!(user_id)
+
     {:noreply,
      socket
+     |> assign(:current_scope, BetPlace.Accounts.build_scope(updated_user))
      |> assign(:polla_tickets, Betting.list_polla_tickets_for_user(user_id))
      |> assign(:hvh_bets, Betting.list_hvh_bets_for_user(user_id))}
   end
