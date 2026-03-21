@@ -308,7 +308,7 @@ defmodule BetPlaceWeb.Admin.TicketsLive do
                         do: "badge badge-primary badge-sm",
                         else: "badge badge-secondary badge-sm"
                     }>
-                      {if bet.side_chosen == :a, do: "Lado A", else: "Lado B"}
+                      {if bet.side_chosen == :a, do: "Macho", else: "Hembra"}
                     </span>
                   </td>
                   <td>${format_decimal(bet.amount)}</td>

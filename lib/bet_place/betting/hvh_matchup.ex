@@ -13,10 +13,14 @@ defmodule BetPlace.Betting.HvhMatchup do
     field :total_pool, :decimal, default: Decimal.new("0.00")
     field :void_reason, :string
     field :resolved_at, :utc_datetime
+    field :payout_pct, :decimal, default: Decimal.new("80.00")
+    field :settlement_source, Ecto.Enum, values: [:auto_sync, :manual_admin]
+    field :settled_at, :utc_datetime
 
     belongs_to :game_event, BetPlace.Games.GameEvent
     belongs_to :race, BetPlace.Racing.Race
     belongs_to :creator, BetPlace.Accounts.User, foreign_key: :created_by
+    belongs_to :settled_by_user, BetPlace.Accounts.User
 
     has_many :hvh_matchup_sides, BetPlace.Betting.HvhMatchupSide
     has_many :hvh_bets, BetPlace.Betting.HvhBet
@@ -25,7 +29,7 @@ defmodule BetPlace.Betting.HvhMatchup do
   end
 
   @required_fields ~w(game_event_id race_id created_by)a
-  @optional_fields ~w(status result_side total_side_a total_side_b total_pool void_reason resolved_at)a
+  @optional_fields ~w(status result_side total_side_a total_side_b total_pool void_reason resolved_at payout_pct settlement_source settled_at settled_by_user_id)a
 
   def changeset(matchup, attrs) do
     matchup
@@ -45,7 +49,12 @@ defmodule BetPlace.Betting.HvhMatchup do
       :total_side_b,
       :total_pool,
       :void_reason,
-      :resolved_at
+      :resolved_at,
+      :payout_pct,
+      :settlement_source,
+      :settled_at,
+      :settled_by_user_id
     ])
+    |> validate_number(:payout_pct, greater_than: Decimal.new("0"))
   end
 end

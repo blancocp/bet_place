@@ -2,7 +2,7 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
   use BetPlaceWeb, :live_view
 
   alias BetPlace.{Accounts, Games, Racing}
-  alias BetPlace.Api.{ApiSyncLog, SyncWorker, SyncSettings}
+  alias BetPlace.Api.{ApiSyncLog, SeedResultSimulator, SyncWorker, SyncSettings}
 
   def render(assigns) do
     ~H"""
@@ -169,6 +169,13 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
                 phx-disable-with="Sincronizando..."
               >
                 <.icon name="hero-arrow-path" class="size-4" /> Sync Todo
+              </button>
+              <button
+                phx-click="simulate_seed_results"
+                class="btn btn-secondary btn-sm gap-2"
+                phx-disable-with="Aplicando..."
+              >
+                <.icon name="hero-beaker" class="size-4" /> Simular resultados (seed)
               </button>
             </div>
             <p class="text-xs text-base-content/40 mt-2">
@@ -346,6 +353,19 @@ defmodule BetPlaceWeb.Admin.DashboardLive do
     SyncWorker.sync_now(:results, date)
 
     {:noreply, socket |> put_flash(:info, "Sync completo para #{date} iniciado.")}
+  end
+
+  def handle_event("simulate_seed_results", _params, socket) do
+    {:ok, summary} = SeedResultSimulator.run_today()
+    stats = load_stats()
+
+    {:noreply,
+     socket
+     |> assign(:stats, stats)
+     |> put_flash(
+       :info,
+       "Resultados seed aplicados: #{summary.applied}/#{summary.total} carreras (#{summary.skipped} omitidas)."
+     )}
   end
 
   defp load_stats do

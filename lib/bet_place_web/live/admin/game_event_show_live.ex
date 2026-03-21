@@ -134,7 +134,7 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
                 >
                   <div class="flex items-center gap-4">
                     <div class="text-sm">
-                      <span class="font-medium">Lado A:</span>
+                      <span class="font-medium">Macho:</span>
                       <span class="text-base-content/70 ml-1">
                         {matchup.hvh_matchup_sides
                         |> Enum.filter(&(&1.side == :a))
@@ -143,21 +143,59 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
                     </div>
                     <span class="text-base-content/40">vs</span>
                     <div class="text-sm">
-                      <span class="font-medium">Lado B:</span>
+                      <span class="font-medium">Hembra:</span>
                       <span class="text-base-content/70 ml-1">
                         {matchup.hvh_matchup_sides
                         |> Enum.filter(&(&1.side == :b))
                         |> Enum.map_join(", ", & &1.runner.horse.name)}
                       </span>
                     </div>
+                    <div class="text-sm text-base-content/70">
+                      Pago: {format_decimal(matchup.payout_pct)}%
+                    </div>
                   </div>
-                  <span class={["badge badge-sm", matchup_status_class(matchup.status)]}>
-                    {matchup.status}
-                  </span>
+                  <div class="flex items-center gap-2">
+                    <span class={["badge badge-sm", matchup_status_class(matchup.status)]}>
+                      {matchup.status}
+                    </span>
+                    <button
+                      :if={matchup.status in [:open, :closed]}
+                      class="btn btn-outline btn-xs"
+                      phx-click="open_settlement_modal"
+                      phx-value-id={matchup.id}
+                    >
+                      Confirmar VS
+                    </button>
+                  </div>
                 </div>
               </div>
             <% end %>
           </div>
+        </div>
+        <div :if={@show_settlement_modal} class="modal modal-open">
+          <div class="modal-box">
+            <h3 class="font-bold text-lg mb-3">Confirmar carrera VS</h3>
+            <.form
+              for={@settlement_form}
+              id="manual-settlement-form"
+              phx-submit="confirm_settlement"
+              class="space-y-3"
+            >
+              <.input field={@settlement_form[:matchup_id]} type="hidden" />
+              <.input
+                field={@settlement_form[:payout_pct]}
+                type="number"
+                step="0.01"
+                min="1"
+                label="Porcentaje de pago (%)"
+              />
+              <div class="modal-action">
+                <button type="button" class="btn" phx-click="close_settlement_modal">Cancelar</button>
+                <button class="btn btn-primary">Confirmar resultado</button>
+              </div>
+            </.form>
+          </div>
+          <div class="modal-backdrop" phx-click="close_settlement_modal"></div>
         </div>
       </div>
     </Layouts.app>
@@ -167,6 +205,7 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
   def mount(%{"id" => id}, _session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(BetPlace.PubSub, "sync_event:#{id}")
+      Phoenix.PubSub.subscribe(BetPlace.PubSub, "game_event:#{id}")
     end
 
     event = Games.get_game_event!(id)
@@ -178,7 +217,9 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
        event: event,
        event_races: event_races,
        matchups: matchups,
-       syncing: false
+       syncing: false,
+       show_settlement_modal: false,
+       settlement_form: to_form(%{"matchup_id" => "", "payout_pct" => "80"}, as: :settlement)
      )}
   end
 
@@ -214,6 +255,42 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
     end
   end
 
+  def handle_event("open_settlement_modal", %{"id" => matchup_id}, socket) do
+    matchup = Enum.find(socket.assigns.matchups, &(to_string(&1.id) == matchup_id))
+    pct = if matchup && matchup.payout_pct, do: Decimal.to_string(matchup.payout_pct), else: "80"
+
+    {:noreply,
+     socket
+     |> assign(:show_settlement_modal, true)
+     |> assign(
+       :settlement_form,
+       to_form(%{"matchup_id" => matchup_id, "payout_pct" => pct}, as: :settlement)
+     )}
+  end
+
+  def handle_event("close_settlement_modal", _params, socket) do
+    {:noreply, assign(socket, :show_settlement_modal, false)}
+  end
+
+  def handle_event("confirm_settlement", %{"settlement" => params}, socket) do
+    with {pct, ""} <- Decimal.parse(params["payout_pct"]),
+         {:ok, _} <-
+           Betting.resolve_hvh_matchup_manual(
+             params["matchup_id"],
+             socket.assigns.current_scope.user.id,
+             pct
+           ) do
+      {:noreply,
+       socket
+       |> assign(:show_settlement_modal, false)
+       |> assign(:matchups, Betting.list_hvh_matchups_for_event(socket.assigns.event.id))
+       |> put_flash(:info, "Resultado VS confirmado manualmente.")}
+    else
+      _ ->
+        {:noreply, put_flash(socket, :error, "No se pudo confirmar el resultado VS.")}
+    end
+  end
+
   def handle_info({:sync_event_completed, {:ok, synced_count}}, socket) do
     event = Games.get_game_event!(socket.assigns.event.id)
     event_races = Games.list_game_event_races(socket.assigns.event.id)
@@ -230,6 +307,16 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
      socket
      |> assign(:syncing, false)
      |> put_flash(:error, "El sync terminó con errores. Revisa los logs.")}
+  end
+
+  def handle_info({:hvh_matchup_settled, _matchup_id, _winning_side}, socket) do
+    {:noreply,
+     assign(socket, :matchups, Betting.list_hvh_matchups_for_event(socket.assigns.event.id))}
+  end
+
+  def handle_info({:hvh_matchup_voided, _matchup_id}, socket) do
+    {:noreply,
+     assign(socket, :matchups, Betting.list_hvh_matchups_for_event(socket.assigns.event.id))}
   end
 
   defp status_badge_class(:open), do: "badge-success"
@@ -255,4 +342,7 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
   defp matchup_status_class(:finished), do: "badge-info"
   defp matchup_status_class(:void), do: "badge-error"
   defp matchup_status_class(_), do: "badge-ghost"
+
+  defp format_decimal(nil), do: "0.00"
+  defp format_decimal(value), do: Decimal.round(value, 2) |> Decimal.to_string()
 end

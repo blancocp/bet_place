@@ -223,7 +223,7 @@ defmodule BetPlace.Api.SyncService do
 
       Betting.list_hvh_matchups_for_race(race.id)
       |> Enum.filter(&(&1.status in [:open, :closed]))
-      |> Enum.each(&Settlement.resolve_hvh_matchup(&1.id))
+      |> Enum.each(&Settlement.resolve_hvh_matchup(&1.id, settlement_source: :auto_sync))
     end
 
     # Handle any new non-runners (idempotent check)
