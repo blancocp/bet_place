@@ -167,6 +167,12 @@ defmodule BetPlace.Betting.Settlement do
       {:game_event_settled, game_event_id}
     )
 
+    Phoenix.PubSub.broadcast(
+      BetPlace.PubSub,
+      "game_events",
+      {:game_event_status_changed, game_event_id}
+    )
+
     Logger.info(
       "Settlement: event #{game_event_id} settled. Winners: #{winner_count}, Prize pool: #{prize_pool}"
     )
@@ -480,6 +486,12 @@ defmodule BetPlace.Betting.Settlement do
       BetPlace.PubSub,
       "game_event:#{event.id}",
       {:game_event_canceled, event.id}
+    )
+
+    Phoenix.PubSub.broadcast(
+      BetPlace.PubSub,
+      "game_events",
+      {:game_event_status_changed, event.id}
     )
 
     Logger.info("Settlement: refunded #{length(tickets)} tickets for canceled event #{event.id}")

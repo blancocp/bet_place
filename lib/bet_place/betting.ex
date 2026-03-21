@@ -201,6 +201,23 @@ defmodule BetPlace.Betting do
     Enum.sort_by(rows, & &1.total_points, :desc)
   end
 
+  def get_polla_event_counts(game_event_id) do
+    ticket_count =
+      PollaTicket
+      |> where([pt], pt.game_event_id == ^game_event_id)
+      |> select([pt], count(pt.id))
+      |> Repo.one()
+
+    combination_count =
+      PollaCombination
+      |> join(:inner, [pc], pt in assoc(pc, :polla_ticket))
+      |> where([pc, pt], pt.game_event_id == ^game_event_id)
+      |> select([pc, _pt], count(pc.id))
+      |> Repo.one()
+
+    %{ticket_count: ticket_count || 0, combination_count: combination_count || 0}
+  end
+
   defp build_leaderboard_row(ticket, combo, ordered_races) do
     points_lookup =
       Map.new(ticket.polla_selections || [], fn s ->
@@ -452,10 +469,11 @@ defmodule BetPlace.Betting do
     PollaTicket
     |> where([pt], pt.user_id == ^user_id and pt.game_event_id == ^event_id)
     |> order_by([pt], desc: pt.inserted_at)
-    |> preload(
+    |> preload([
+      :game_event,
       polla_selections: [game_event_race: :race, runner: [:horse]],
       polla_combinations: [polla_combination_selections: [game_event_race: [], runner: []]]
-    )
+    ])
     |> Repo.all()
   end
 
