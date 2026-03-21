@@ -58,6 +58,9 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
        Betting.list_polla_tickets_for_user_and_event(user_id, event.id)
      )
      |> assign(:my_hvh_bets, Betting.list_hvh_bets_for_user_and_event(user_id, event.id))
+     |> assign(:dynamic_edit_ticket_id, nil)
+     |> assign(:dynamic_edit_selections, %{})
+     |> assign(:show_dynamic_edit_modal, false)
      |> assign(
        :leaderboard_rows,
        if(event.status == :finished, do: Betting.list_leaderboard_rows(event.id), else: [])
@@ -258,6 +261,92 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
     end
   end
 
+  def handle_event("open_dynamic_edit", %{"ticket_id" => ticket_id}, socket) do
+    ticket =
+      Enum.find(socket.assigns.my_polla_tickets, fn t ->
+        to_string(t.id) == to_string(ticket_id)
+      end)
+
+    dynamic_selections =
+      ticket.polla_selections
+      |> Enum.filter(&(&1.game_event_race.race_order in [5, 6]))
+      |> Enum.group_by(&to_string(&1.game_event_race_id), &to_string(&1.runner_id))
+      |> Map.new(fn {k, v} -> {k, MapSet.new(v)} end)
+
+    {:noreply,
+     socket
+     |> assign(:dynamic_edit_ticket_id, to_string(ticket_id))
+     |> assign(:dynamic_edit_selections, dynamic_selections)
+     |> assign(:show_dynamic_edit_modal, true)}
+  end
+
+  def handle_event("close_dynamic_edit", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_dynamic_edit_modal, false)
+     |> assign(:dynamic_edit_ticket_id, nil)
+     |> assign(:dynamic_edit_selections, %{})}
+  end
+
+  def handle_event(
+        "toggle_dynamic_runner",
+        %{"game_event_race_id" => ger_id, "runner_id" => runner_id},
+        socket
+      ) do
+    current = Map.get(socket.assigns.dynamic_edit_selections, ger_id, MapSet.new())
+
+    updated =
+      if MapSet.member?(current, runner_id),
+        do: MapSet.delete(current, runner_id),
+        else: MapSet.put(current, runner_id)
+
+    {:noreply,
+     assign(
+       socket,
+       :dynamic_edit_selections,
+       Map.put(socket.assigns.dynamic_edit_selections, ger_id, updated)
+     )}
+  end
+
+  def handle_event("save_dynamic_edit", _params, socket) do
+    user_id = socket.assigns.current_scope.user.id
+    ticket_id = socket.assigns.dynamic_edit_ticket_id
+
+    payload =
+      socket.assigns.dynamic_edit_selections
+      |> Map.new(fn {k, v} -> {k, MapSet.to_list(v)} end)
+
+    case Betting.update_dynamic_polla_ticket(user_id, ticket_id, payload) do
+      {:ok, :updated} ->
+        {:noreply,
+         socket
+         |> assign(
+           :my_polla_tickets,
+           Betting.list_polla_tickets_for_user_and_event(user_id, socket.assigns.event.id)
+         )
+         |> assign(:show_dynamic_edit_modal, false)
+         |> assign(:dynamic_edit_ticket_id, nil)
+         |> assign(:dynamic_edit_selections, %{})
+         |> put_flash(:info, "Combinaciones actualizadas para 5ta y 6ta válida.")}
+
+      {:error, :dynamic_window_closed} ->
+        {:noreply, put_flash(socket, :error, "La ventana dinámica ya cerró.")}
+
+      {:error, :dynamic_window_not_enabled} ->
+        {:noreply, put_flash(socket, :error, "La ventana dinámica aún no está habilitada.")}
+
+      {:error, :invalid_runner_selection} ->
+        {:noreply, put_flash(socket, :error, "Selección inválida para 5ta/6ta válida.")}
+
+      {:error, :incomplete_selections} ->
+        {:noreply,
+         put_flash(socket, :error, "Debes dejar al menos un ejemplar en 5ta y 6ta válida.")}
+
+      _ ->
+        {:noreply, put_flash(socket, :error, "No se pudo actualizar la combinación dinámica.")}
+    end
+  end
+
   # ── Info ──────────────────────────────────────────────────────────────────
 
   def handle_info(:tick, socket) do
@@ -269,6 +358,20 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
 
   def handle_info({:game_event_update, event}, socket) do
     {:noreply, assign(socket, :event, event)}
+  end
+
+  def handle_info({:dynamic_polla_enabled, event_id}, socket) do
+    if to_string(socket.assigns.event.id) == to_string(event_id) do
+      {:noreply,
+       socket
+       |> assign(:event, Games.get_game_event!(event_id))
+       |> put_flash(
+         :info,
+         "Polla dinámica habilitada: puedes editar 5ta y 6ta por tiempo limitado."
+       )}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:balance_updated, _new_balance}, socket) do
@@ -319,6 +422,9 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
         <div class="flex items-center justify-between gap-2 mb-2">
           <div class="min-w-0">
             <h1 class="text-xl font-bold leading-tight truncate">{@event.name}</h1>
+            <span :if={@event.dynamic_polla} class="badge badge-accent badge-xs mt-1">
+              <.icon name="hero-bolt" class="size-3 mr-1" /> Polla dinámica
+            </span>
             <p class="text-xs text-base-content/60">{@event.course.full_name}</p>
           </div>
           <div class="text-right shrink-0 flex items-center gap-3">
@@ -343,7 +449,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
             <div class="flex flex-wrap gap-4 text-sm">
               <span>Bote: <strong>${format_decimal(@event.total_pool)}</strong></span>
               <span>
-                Valor base: <strong>${format_decimal(@event.game_config.ticket_value)}</strong>
+                Valor base: <strong>${format_decimal(@event.ticket_value)}</strong>
               </span>
               <span>
                 Combinaciones: <strong>{leaderboard_total_combos(@leaderboard_rows)}</strong>
@@ -443,7 +549,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                 <span>
                   Ticket:
                   <strong class="text-base-content">
-                    ${format_decimal(@event.game_config.ticket_value)}
+                    ${format_decimal(@event.ticket_value)}
                   </strong>
                 </span>
                 <span>
@@ -668,7 +774,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
               <div class="text-center">
                 <div class="text-xs text-base-content/60">Valor</div>
                 <div class="text-xl font-bold">
-                  ${format_decimal(@event.game_config.ticket_value)}
+                  ${format_decimal(@event.ticket_value)}
                 </div>
               </div>
               <div class="text-center">
@@ -784,7 +890,18 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
               <div :for={ticket <- @my_polla_tickets} class="space-y-2">
                 <div class="flex items-center justify-between text-xs text-base-content/60">
                   <span class="font-mono">#{String.slice(ticket.id, 0, 8)}</span>
-                  <span class={ticket_badge(ticket.status)}>{ticket_label(ticket.status)}</span>
+                  <div class="flex items-center gap-2">
+                    <span class={ticket_badge(ticket.status)}>{ticket_label(ticket.status)}</span>
+                    <button
+                      :if={can_edit_dynamic_ticket?(@event, ticket)}
+                      type="button"
+                      class="btn btn-xs btn-outline"
+                      phx-click="open_dynamic_edit"
+                      phx-value-ticket_id={ticket.id}
+                    >
+                      Editar 5ta/6ta
+                    </button>
+                  </div>
                 </div>
                 <div class="flex justify-between text-sm mb-1">
                   <span>{ticket.combination_count} combinaciones</span>
@@ -905,6 +1022,47 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
           </div>
         </div>
       </div>
+
+      <div :if={@show_dynamic_edit_modal} class="modal modal-open">
+        <div class="modal-box">
+          <h3 class="font-bold text-lg">Editar Polla dinámica</h3>
+          <p class="text-sm text-base-content/70 mt-1 mb-3">
+            Puedes modificar únicamente 5ta y 6ta válida durante la ventana dinámica.
+          </p>
+          <div class="space-y-4">
+            <%= for {{ger, runners}, _idx} <- Enum.with_index(dynamic_races_with_runners(@races_with_runners)) do %>
+              <div class="rounded-lg border border-base-200 p-3">
+                <div class="text-sm font-semibold mb-2">{ger.race_order}ª Válida</div>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    :for={runner <- runners}
+                    type="button"
+                    class={[
+                      "btn btn-square btn-sm",
+                      if(dynamic_selected?(@dynamic_edit_selections, ger.id, runner.id),
+                        do: "btn-primary",
+                        else: "btn-outline"
+                      )
+                    ]}
+                    phx-click="toggle_dynamic_runner"
+                    phx-value-game_event_race_id={ger.id}
+                    phx-value-runner_id={runner.id}
+                  >
+                    {runner.program_number}
+                  </button>
+                </div>
+              </div>
+            <% end %>
+          </div>
+          <div class="modal-action">
+            <button type="button" class="btn" phx-click="close_dynamic_edit">Cancelar</button>
+            <button type="button" class="btn btn-primary" phx-click="save_dynamic_edit">
+              Guardar cambios
+            </button>
+          </div>
+        </div>
+        <div class="modal-backdrop" phx-click="close_dynamic_edit"></div>
+      </div>
     </Layouts.app>
     """
   end
@@ -913,7 +1071,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
 
   defp compute_totals(selections, %{races_with_runners: races, event: event}) do
     race_ids = Enum.map(races, fn {ger, _} -> ger.id end)
-    ticket_value = event.game_config.ticket_value || Decimal.new("1.00")
+    ticket_value = event.ticket_value || event.game_config.ticket_value || Decimal.new("1.00")
 
     all_complete =
       Enum.all?(race_ids, fn id ->
@@ -1102,5 +1260,20 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
     hvh_selections
     |> Map.get(matchup_id || "", %{})
     |> Map.get(:amount, "0")
+  end
+
+  defp can_edit_dynamic_ticket?(event, ticket) do
+    ticket.status == :active and Games.dynamic_window_open?(event)
+  end
+
+  defp dynamic_races_with_runners(races_with_runners) do
+    Enum.filter(races_with_runners, fn {ger, _runners} -> ger.race_order in [5, 6] end)
+  end
+
+  defp dynamic_selected?(dynamic_edit_selections, game_event_race_id, runner_id) do
+    game_event_race_id
+    |> to_string()
+    |> then(&Map.get(dynamic_edit_selections, &1, MapSet.new()))
+    |> MapSet.member?(to_string(runner_id))
   end
 end

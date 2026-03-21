@@ -33,7 +33,12 @@ defmodule BetPlaceWeb.Admin.GameEventListLive do
                 </td>
               </tr>
               <tr :for={{id, event} <- @streams.events} id={id} class="hover">
-                <td class="font-medium">{event.name}</td>
+                <td class="font-medium">
+                  <span>{event.name}</span>
+                  <span :if={event.dynamic_polla} class="badge badge-accent badge-xs ml-2">
+                    <.icon name="hero-bolt" class="size-3 mr-1" /> Dinámica
+                  </span>
+                </td>
                 <td>
                   <span class="badge badge-outline badge-sm">
                     {event.game_type.name}

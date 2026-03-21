@@ -15,6 +15,7 @@ defmodule BetPlace.Betting.Settlement do
   alias BetPlace.Finance.Transaction
   alias BetPlace.Racing
   alias BetPlace.Racing.RunnerReplacement
+  alias BetPlace.Games
 
   # ── Score Race ────────────────────────────────────────────────────────────
 
@@ -37,6 +38,7 @@ defmodule BetPlace.Betting.Settlement do
     end)
 
     ger |> GameEventRace.status_changeset(:finished) |> Repo.update!()
+    maybe_enable_dynamic_polla(ger)
 
     maybe_settle_event(ger.game_event_id)
     :ok
@@ -712,4 +714,25 @@ defmodule BetPlace.Betting.Settlement do
   defp points_for_position(2), do: 3
   defp points_for_position(3), do: 1
   defp points_for_position(_), do: 0
+
+  defp maybe_enable_dynamic_polla(ger) do
+    if ger.race_order == 4 do
+      event = Games.get_game_event!(ger.game_event_id)
+
+      if event.game_type.code == :polla and event.dynamic_polla and
+           is_nil(event.dynamic_enabled_at) do
+        case Games.enable_dynamic_polla_window(event) do
+          {:ok, updated} ->
+            Phoenix.PubSub.broadcast(
+              BetPlace.PubSub,
+              "game_event:#{updated.id}",
+              {:dynamic_polla_enabled, updated.id}
+            )
+
+          _ ->
+            :ok
+        end
+      end
+    end
+  end
 end

@@ -41,7 +41,7 @@ defmodule BetPlace.Betting do
 
     combinations = cartesian_product(ordered_selections)
     combination_count = length(combinations)
-    ticket_value = event.game_config.ticket_value || Decimal.new("1.00")
+    ticket_value = event.ticket_value || event.game_config.ticket_value || Decimal.new("1.00")
     total_paid = Decimal.mult(Decimal.new(combination_count), ticket_value)
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
@@ -272,6 +272,61 @@ defmodule BetPlace.Betting do
 
   def create_polla_selection(attrs) do
     %PollaSelection{} |> PollaSelection.changeset(attrs) |> Repo.insert()
+  end
+
+  def update_dynamic_polla_ticket(user_id, ticket_id, selections_by_race)
+      when is_map(selections_by_race) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    ticket =
+      PollaTicket
+      |> preload(
+        game_event: [:game_type, :game_event_races],
+        polla_selections: [],
+        polla_combinations: [:polla_combination_selections]
+      )
+      |> Repo.get!(ticket_id)
+
+    event = ticket.game_event
+
+    cond do
+      ticket.user_id != user_id ->
+        {:error, :forbidden}
+
+      ticket.status != :active ->
+        {:error, :ticket_not_editable}
+
+      event.game_type.code != :polla or not event.dynamic_polla ->
+        {:error, :not_dynamic_polla}
+
+      is_nil(event.dynamic_enabled_at) or is_nil(event.dynamic_closes_at) ->
+        {:error, :dynamic_window_not_enabled}
+
+      DateTime.compare(now, event.dynamic_closes_at) == :gt ->
+        {:error, :dynamic_window_closed}
+
+      true ->
+        ordered_races = Enum.sort_by(event.game_event_races, & &1.race_order)
+        editable_races = Enum.filter(ordered_races, &(&1.race_order in [5, 6]))
+        editable_ids = MapSet.new(Enum.map(editable_races, &to_string(&1.id)))
+
+        if map_size(selections_by_race) == 0 or
+             Enum.any?(Map.keys(selections_by_race), &(not MapSet.member?(editable_ids, &1))) do
+          {:error, :invalid_dynamic_selection_scope}
+        else
+          with :ok <- validate_dynamic_runner_ids(editable_races, selections_by_race) do
+            full_selections = merge_ticket_selections(ticket, selections_by_race)
+
+            if Enum.any?(ordered_races, fn ger ->
+                 Map.get(full_selections, to_string(ger.id), []) == []
+               end) do
+              {:error, :incomplete_selections}
+            else
+              rebuild_ticket_with_new_selections(ticket, ordered_races, full_selections, now)
+            end
+          end
+        end
+    end
   end
 
   # ── Polla Combinations ────────────────────────────────────────────────────
@@ -533,5 +588,134 @@ defmodule BetPlace.Betting do
     |> order_by([b], desc: b.placed_at)
     |> preload([:user, hvh_matchup: [:game_event, race: [:course]]])
     |> Repo.all()
+  end
+
+  defp validate_dynamic_runner_ids(editable_races, selections_by_race) do
+    valid_by_race =
+      editable_races
+      |> Enum.map(fn ger ->
+        valid_ids =
+          ger.race_id
+          |> BetPlace.Racing.list_runners_for_race()
+          |> Enum.reject(& &1.non_runner)
+          |> Enum.map(&to_string(&1.id))
+          |> MapSet.new()
+
+        {to_string(ger.id), valid_ids}
+      end)
+      |> Map.new()
+
+    invalid? =
+      Enum.any?(selections_by_race, fn {ger_id, runner_ids} ->
+        valid_ids = Map.get(valid_by_race, ger_id, MapSet.new())
+        runner_ids == [] or Enum.any?(runner_ids, &(not MapSet.member?(valid_ids, to_string(&1))))
+      end)
+
+    if invalid?, do: {:error, :invalid_runner_selection}, else: :ok
+  end
+
+  defp merge_ticket_selections(ticket, editable_selections) do
+    base =
+      ticket.polla_selections
+      |> Enum.group_by(&to_string(&1.game_event_race_id), &to_string(&1.runner_id))
+      |> Map.new(fn {k, v} -> {k, Enum.uniq(v)} end)
+
+    Map.merge(base, editable_selections)
+  end
+
+  defp rebuild_ticket_with_new_selections(ticket, ordered_races, full_selections, now) do
+    ordered_selection_lists =
+      Enum.map(ordered_races, fn ger ->
+        Map.get(full_selections, to_string(ger.id), [])
+      end)
+
+    combinations = cartesian_product(ordered_selection_lists)
+    combination_count = length(combinations)
+
+    Ecto.Multi.new()
+    |> Ecto.Multi.delete_all(
+      :delete_combo_selections,
+      from(cs in PollaCombinationSelection,
+        join: c in PollaCombination,
+        on: cs.polla_combination_id == c.id,
+        where: c.polla_ticket_id == ^ticket.id
+      )
+    )
+    |> Ecto.Multi.delete_all(
+      :delete_combinations,
+      from(c in PollaCombination, where: c.polla_ticket_id == ^ticket.id)
+    )
+    |> Ecto.Multi.delete_all(
+      :delete_editable_selections,
+      from(s in PollaSelection,
+        where:
+          s.polla_ticket_id == ^ticket.id and
+            s.game_event_race_id in ^Enum.map(
+              Enum.filter(ordered_races, &(&1.race_order in [5, 6])),
+              & &1.id
+            )
+      )
+    )
+    |> Ecto.Multi.insert_all(:insert_editable_selections, PollaSelection, fn _ ->
+      ordered_races
+      |> Enum.filter(&(&1.race_order in [5, 6]))
+      |> Enum.flat_map(fn ger ->
+        Map.get(full_selections, to_string(ger.id), [])
+        |> Enum.map(fn runner_id ->
+          %{
+            polla_ticket_id: ticket.id,
+            game_event_race_id: ger.id,
+            runner_id: runner_id,
+            effective_runner_id: runner_id,
+            inserted_at: now
+          }
+        end)
+      end)
+    end)
+    |> Ecto.Multi.insert_all(
+      :insert_combinations,
+      PollaCombination,
+      fn _ ->
+        combinations
+        |> Enum.with_index(1)
+        |> Enum.map(fn {_combo, idx} ->
+          %{
+            polla_ticket_id: ticket.id,
+            combination_index: idx,
+            total_points: 0,
+            is_winner: false,
+            inserted_at: now,
+            updated_at: now
+          }
+        end)
+      end,
+      returning: true
+    )
+    |> Ecto.Multi.insert_all(
+      :insert_combo_selections,
+      PollaCombinationSelection,
+      fn %{insert_combinations: {_, combos}} ->
+        sorted_combos = Enum.sort_by(combos, & &1.combination_index)
+
+        for {combo_record, combo_runners} <- Enum.zip(sorted_combos, combinations),
+            {runner_id, ger} <- Enum.zip(combo_runners, ordered_races) do
+          %{
+            polla_combination_id: combo_record.id,
+            game_event_race_id: ger.id,
+            runner_id: runner_id,
+            inserted_at: now
+          }
+        end
+      end
+    )
+    |> Ecto.Multi.update(
+      :update_ticket_count,
+      Ecto.Changeset.change(ticket, %{combination_count: combination_count})
+    )
+    |> Repo.transaction()
+    |> case do
+      {:ok, _} -> {:ok, :updated}
+      {:error, step, reason, _} -> {:error, {step, reason}}
+    end
   end
 end

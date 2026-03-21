@@ -79,11 +79,11 @@ defmodule BetPlace.Games do
   end
 
   def create_game_event(attrs) do
-    %GameEvent{} |> GameEvent.changeset(attrs) |> Repo.insert()
+    %GameEvent{} |> GameEvent.changeset(sanitize_event_attrs(attrs)) |> Repo.insert()
   end
 
   def update_game_event(%GameEvent{} = event, attrs) do
-    event |> GameEvent.changeset(attrs) |> Repo.update()
+    event |> GameEvent.changeset(sanitize_event_attrs(attrs)) |> Repo.update()
   end
 
   def update_game_event_status(%GameEvent{} = event, status) do
@@ -129,6 +129,8 @@ defmodule BetPlace.Games do
   `races` is an ordered list of Race structs (race_order 1..N).
   """
   def create_game_event_with_races(attrs, races) when length(races) >= 1 do
+    attrs = sanitize_event_attrs(attrs)
+
     betting_closes_at =
       races
       |> Enum.map(& &1.post_time)
@@ -159,6 +161,43 @@ defmodule BetPlace.Games do
       {:ok, length(races)}
     end)
     |> Repo.transaction()
+  end
+
+  def enable_dynamic_polla_window(%GameEvent{} = event) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    minutes = event.dynamic_window_minutes || 3
+
+    update_game_event(event, %{
+      dynamic_enabled_at: now,
+      dynamic_closes_at: DateTime.add(now, minutes * 60, :second)
+    })
+  end
+
+  def dynamic_window_open?(%GameEvent{} = event) do
+    event.dynamic_polla &&
+      not is_nil(event.dynamic_enabled_at) &&
+      not is_nil(event.dynamic_closes_at) &&
+      DateTime.compare(DateTime.utc_now(), event.dynamic_closes_at) != :gt
+  end
+
+  defp sanitize_event_attrs(attrs) when is_map(attrs) do
+    game_type_id = attrs[:game_type_id] || attrs["game_type_id"]
+    game_type = if game_type_id, do: Repo.get(GameType, game_type_id), else: nil
+    ticket_value = attrs[:ticket_value] || attrs["ticket_value"] || Decimal.new("100.00")
+
+    attrs
+    |> Map.put(:ticket_value, ticket_value)
+    |> maybe_sanitize_dynamic(game_type)
+  end
+
+  defp maybe_sanitize_dynamic(attrs, %GameType{code: :polla}), do: attrs
+
+  defp maybe_sanitize_dynamic(attrs, _other) do
+    attrs
+    |> Map.put(:dynamic_polla, false)
+    |> Map.put(:dynamic_window_minutes, nil)
+    |> Map.put(:dynamic_enabled_at, nil)
+    |> Map.put(:dynamic_closes_at, nil)
   end
 
   # ── Stats ─────────────────────────────────────────────────────────────────
