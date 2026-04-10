@@ -21,6 +21,9 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
               </span>
               <span class="text-sm text-base-content/60">{@event.course.full_name}</span>
               <span class="text-sm text-base-content/60">{@event.game_type.name}</span>
+              <span :if={@event.dynamic_polla} class="badge badge-accent badge-sm">
+                <.icon name="hero-bolt" class="size-4 mr-1" /> Polla dinámica
+              </span>
             </div>
           </div>
           <div class="flex items-center gap-2">
@@ -67,6 +70,10 @@ defmodule BetPlaceWeb.Admin.GameEventShowLive do
                 do: Calendar.strftime(@event.betting_closes_at, "%d/%m %H:%M"),
                 else: "—"}
             </div>
+          </div>
+          <div class="stat bg-base-100 border border-base-200 rounded-box p-3">
+            <div class="stat-title text-xs">Ticket</div>
+            <div class="stat-value text-lg">${format_decimal(@event.ticket_value)}</div>
           </div>
         </div>
 

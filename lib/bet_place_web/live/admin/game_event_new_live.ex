@@ -57,6 +57,42 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
                 />
               </div>
 
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div class="form-control">
+                  <.input
+                    field={@form[:ticket_value]}
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    label="Valor del ticket"
+                    required
+                  />
+                </div>
+                <div :if={@is_polla} class="form-control">
+                  <label class="label cursor-pointer justify-start gap-3">
+                    <input
+                      type="checkbox"
+                      name="dynamic_polla"
+                      value="true"
+                      checked={@dynamic_polla}
+                      class="checkbox checkbox-primary"
+                    />
+                    <span class="label-text font-medium">Polla dinámica</span>
+                  </label>
+                </div>
+              </div>
+
+              <div :if={@is_polla and @dynamic_polla} class="form-control mt-2">
+                <label class="label">
+                  <span class="label-text font-medium">Ventana dinámica (minutos)</span>
+                </label>
+                <select name="dynamic_window_minutes" class="select select-bordered" required>
+                  <option value="1" selected={@dynamic_window_minutes == "1"}>1 minuto</option>
+                  <option value="2" selected={@dynamic_window_minutes == "2"}>2 minutos</option>
+                  <option value="3" selected={@dynamic_window_minutes == "3"}>3 minutos</option>
+                </select>
+              </div>
+
               <%!-- Preview de carreras --%>
               <%= if @preview_races != [] do %>
                 <div class="mt-6">
@@ -125,7 +161,14 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
   end
 
   def mount(_params, _session, socket) do
-    form = to_form(%{"name" => "", "game_type_id" => "", "course_id" => ""})
+    form =
+      to_form(%{
+        "name" => "",
+        "game_type_id" => "",
+        "course_id" => "",
+        "ticket_value" => "100.00",
+        "dynamic_window_minutes" => "3"
+      })
 
     {:ok,
      assign(socket,
@@ -134,7 +177,10 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
        courses: Racing.list_courses(),
        selected_game_type_id: nil,
        selected_course_id: nil,
-       preview_races: []
+       preview_races: [],
+       is_polla: false,
+       dynamic_polla: false,
+       dynamic_window_minutes: "3"
      )}
   end
 
@@ -142,6 +188,9 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
     course_id = presence(params["course_id"])
     game_type_id = presence(params["game_type_id"])
     current_name = params["name"] || ""
+    ticket_value = params["ticket_value"] || "100.00"
+    dynamic_polla = params["dynamic_polla"] in ["true", "on", true]
+    dynamic_window_minutes = params["dynamic_window_minutes"] || "3"
 
     game_type = Enum.find(socket.assigns.game_types, &(&1.id == game_type_id))
 
@@ -160,7 +209,13 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
         game_type = Enum.find(socket.assigns.game_types, &(&1.id == game_type_id))
         date = Date.utc_today() |> Calendar.strftime("%d/%m/%Y")
         type_label = if game_type, do: game_type.name, else: "Evento"
-        if course, do: "#{type_label} - #{course.name} - #{date}", else: ""
+
+        suffix =
+          if (dynamic_polla and game_type) && game_type.code == :polla,
+            do: " [Dinamica]",
+            else: ""
+
+        if course, do: "#{type_label} - #{course.name} - #{date}#{suffix}", else: ""
       else
         current_name
       end
@@ -169,7 +224,9 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
       to_form(%{
         "name" => suggested_name,
         "game_type_id" => game_type_id || "",
-        "course_id" => course_id || ""
+        "course_id" => course_id || "",
+        "ticket_value" => ticket_value,
+        "dynamic_window_minutes" => dynamic_window_minutes
       })
 
     {:noreply,
@@ -177,7 +234,10 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
        form: form,
        selected_course_id: course_id,
        selected_game_type_id: game_type_id,
-       preview_races: preview_races
+       preview_races: preview_races,
+       is_polla: game_type && game_type.code == :polla,
+       dynamic_polla: (dynamic_polla and game_type) && game_type.code == :polla,
+       dynamic_window_minutes: dynamic_window_minutes
      )}
   end
 
@@ -185,6 +245,7 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
     course_id = presence(params["course_id"])
     game_type_id = presence(params["game_type_id"])
     name = String.trim(params["name"] || "")
+    ticket_value = String.trim(params["ticket_value"] || "")
 
     game_type = Enum.find(socket.assigns.game_types, &(&1.id == game_type_id))
     is_polla = game_type && game_type.code == :polla
@@ -196,14 +257,23 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
 
     with true <- course_id != nil,
          true <- game_type_id != nil,
+         {ticket_value_decimal, ""} <- Decimal.parse(ticket_value),
+         true <- Decimal.compare(ticket_value_decimal, Decimal.new("0")) == :gt,
          config when not is_nil(config) <- Games.get_active_config_for_game_type(game_type_id),
          races when races != [] <- races_fn.() do
+      dynamic_polla = params["dynamic_polla"] in ["true", "on", true]
+      dynamic_window_minutes = params["dynamic_window_minutes"] || "3"
+
       attrs = %{
         game_type_id: game_type_id,
         game_config_id: config.id,
         course_id: course_id,
         created_by: socket.assigns.current_scope.user.id,
-        name: name
+        name: name,
+        ticket_value: ticket_value_decimal,
+        dynamic_polla: is_polla and dynamic_polla,
+        dynamic_window_minutes:
+          if(is_polla and dynamic_polla, do: String.to_integer(dynamic_window_minutes), else: nil)
       }
 
       case Games.create_game_event_with_races(attrs, races) do
@@ -225,7 +295,7 @@ defmodule BetPlaceWeb.Admin.GameEventNewLive do
          put_flash(
            socket,
            :error,
-           "Completa todos los campos y verifica que haya carreras disponibles."
+           "Completa todos los campos, define un valor de ticket válido y verifica que haya carreras disponibles."
          )}
     end
   end

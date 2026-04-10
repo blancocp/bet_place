@@ -29,7 +29,7 @@ Esta guia permite validar rapidamente el flujo de datos curados, simulacion de r
 Ejecutar desde la raiz del proyecto:
 
 ```bash
-scripts/reset_and_seed.sh
+
 mix phx.server
 ```
 

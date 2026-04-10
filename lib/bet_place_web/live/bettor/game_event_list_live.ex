@@ -52,6 +52,9 @@ defmodule BetPlaceWeb.Bettor.GameEventListLive do
               <div class="flex items-start justify-between gap-2">
                 <div>
                   <h2 class="font-bold leading-tight">{event.name}</h2>
+                  <span :if={event.dynamic_polla} class="badge badge-accent badge-xs mt-1">
+                    <.icon name="hero-bolt" class="size-3 mr-1" /> Polla dinámica
+                  </span>
                   <p class="text-sm text-base-content/60 mt-0.5">{event.course.full_name}</p>
                 </div>
                 <span class={event_status_badge(event.status)}>
