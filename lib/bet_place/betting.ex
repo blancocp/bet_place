@@ -353,7 +353,7 @@ defmodule BetPlace.Betting do
   def list_hvh_matchups_for_event(game_event_id) do
     HvhMatchup
     |> where([m], m.game_event_id == ^game_event_id)
-    |> preload(hvh_matchup_sides: [runner: :horse])
+    |> preload([:race, hvh_matchup_sides: [runner: :horse]])
     |> Repo.all()
   end
 
@@ -501,10 +501,31 @@ defmodule BetPlace.Betting do
   @doc """
   Creates an HvH matchup and its two sides in one transaction.
   `side_a_runner_ids` and `side_b_runner_ids` are lists of runner UUIDs.
+  Both sides must have the same number of runners (and at least one each).
   """
   def create_hvh_matchup_with_sides(matchup_attrs, side_a_runner_ids, side_b_runner_ids) do
     matchup_attrs = Map.put_new(matchup_attrs, :payout_pct, Decimal.new("80.00"))
 
+    a = length(side_a_runner_ids)
+    b = length(side_b_runner_ids)
+
+    cond do
+      a == 0 or b == 0 ->
+        {:error, :empty_side}
+
+      a != b ->
+        {:error, :unequal_side_counts}
+
+      true ->
+        create_hvh_matchup_with_sides_multi(matchup_attrs, side_a_runner_ids, side_b_runner_ids)
+    end
+  end
+
+  defp create_hvh_matchup_with_sides_multi(
+         matchup_attrs,
+         side_a_runner_ids,
+         side_b_runner_ids
+       ) do
     Ecto.Multi.new()
     |> Ecto.Multi.insert(:matchup, HvhMatchup.changeset(%HvhMatchup{}, matchup_attrs))
     |> Ecto.Multi.run(:sides, fn repo, %{matchup: matchup} ->

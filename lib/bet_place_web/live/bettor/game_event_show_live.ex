@@ -35,6 +35,10 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
 
     user_id = socket.assigns.current_scope.user.id
 
+    # Un evento tiene un solo game_type. Si es solo VS, no mostrar UI de Polla.
+    initial_tab =
+      if event.game_type.code == :horse_vs_horse, do: :hvh, else: :polla
+
     {:ok,
      socket
      |> assign(:event, event)
@@ -50,7 +54,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
      |> assign(:time_remaining, time_remaining(event.betting_closes_at))
      |> assign(:show_my_tickets, false)
      |> assign(:expanded_combo_ids, MapSet.new())
-     |> assign(:selected_tab, :polla)
+     |> assign(:selected_tab, initial_tab)
      |> assign(:show_hvh_confirm, false)
      |> assign(:hvh_confirm_matchup_id, nil)
      |> assign(
@@ -93,7 +97,11 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
   end
 
   def handle_event("switch_game_tab", %{"tab" => tab}, socket) do
-    {:noreply, assign(socket, :selected_tab, String.to_existing_atom(tab))}
+    if socket.assigns.event.game_type.code == :horse_vs_horse do
+      {:noreply, socket}
+    else
+      {:noreply, assign(socket, :selected_tab, String.to_existing_atom(tab))}
+    end
   end
 
   def handle_event("open_my_tickets", _, socket) do
@@ -422,10 +430,14 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
         <div class="flex items-center justify-between gap-2 mb-2">
           <div class="min-w-0">
             <h1 class="text-xl font-bold leading-tight truncate">{@event.name}</h1>
-            <span :if={@event.dynamic_polla} class="badge badge-accent badge-xs mt-1">
+            <span
+              :if={@event.game_type.code == :polla and @event.dynamic_polla}
+              class="badge badge-accent badge-xs mt-1"
+            >
               <.icon name="hero-bolt" class="size-3 mr-1" /> Polla dinámica
             </span>
             <p class="text-xs text-base-content/60">{@event.course.full_name}</p>
+            <p class="text-xs font-medium text-primary/80 mt-0.5">{@event.game_type.name}</p>
           </div>
           <div class="text-right shrink-0 flex items-center gap-3">
             <span class={event_status_badge(@event.status)}>{status_label(@event.status)}</span>
@@ -444,64 +456,73 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
         </div>
 
         <%= if @event.status == :finished do %>
-          <%!-- Vista Resultados (evento finalizado) --%>
-          <section class="mb-4 p-3 rounded-lg bg-base-200">
-            <div class="flex flex-wrap gap-4 text-sm">
-              <span>Bote: <strong>${format_decimal(@event.total_pool)}</strong></span>
-              <span>
-                Valor base: <strong>${format_decimal(@event.ticket_value)}</strong>
-              </span>
-              <span>
-                Combinaciones: <strong>{leaderboard_total_combos(@leaderboard_rows)}</strong>
-              </span>
-            </div>
-          </section>
-          <section class="mb-4">
-            <h2 class="text-lg font-semibold mb-2">Resultados</h2>
-            <div class="overflow-x-auto rounded-lg border border-base-200">
-              <table class="table table-zebra table-sm w-full">
-                <thead>
-                  <tr>
-                    <th class="sticky left-0 bg-base-200 z-10">Usuario</th>
-                    <th
-                      :for={i <- 1..leaderboard_num_races(@leaderboard_rows)}
-                      class="text-center"
-                      colspan="2"
-                    >
-                      C{i}
-                    </th>
-                    <th class="text-center font-bold">Total</th>
-                  </tr>
-                  <tr>
-                    <th class="sticky left-0 bg-base-200 z-10"></th>
-                    <th
-                      :for={_i <- 1..leaderboard_num_races(@leaderboard_rows)}
-                      class="text-center text-xs"
-                    >
-                      E
-                    </th>
-                    <th
-                      :for={_i <- 1..leaderboard_num_races(@leaderboard_rows)}
-                      class="text-center text-xs"
-                    >
-                      Pt
-                    </th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr :for={row <- @leaderboard_rows}>
-                    <td class="font-medium sticky left-0 bg-base-100 z-10">{row.username}</td>
-                    <%= for r <- row.races do %>
-                      <td class="text-center text-sm">{r.selection || "—"}</td>
-                      <td class="text-center text-sm">{r.points}</td>
-                    <% end %>
-                    <td class="text-center font-bold">{row.total_points}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
+          <%= if @event.game_type.code == :polla do %>
+            <%!-- Vista Resultados Polla (evento finalizado) --%>
+            <section class="mb-4 p-3 rounded-lg bg-base-200">
+              <div class="flex flex-wrap gap-4 text-sm">
+                <span>Bote: <strong>${format_decimal(@event.total_pool)}</strong></span>
+                <span>
+                  Valor base: <strong>${format_decimal(@event.ticket_value)}</strong>
+                </span>
+                <span>
+                  Combinaciones: <strong>{leaderboard_total_combos(@leaderboard_rows)}</strong>
+                </span>
+              </div>
+            </section>
+            <section class="mb-4">
+              <h2 class="text-lg font-semibold mb-2">Resultados</h2>
+              <div class="overflow-x-auto rounded-lg border border-base-200">
+                <table class="table table-zebra table-sm w-full">
+                  <thead>
+                    <tr>
+                      <th class="sticky left-0 bg-base-200 z-10">Usuario</th>
+                      <th
+                        :for={i <- 1..leaderboard_num_races(@leaderboard_rows)}
+                        class="text-center"
+                        colspan="2"
+                      >
+                        C{i}
+                      </th>
+                      <th class="text-center font-bold">Total</th>
+                    </tr>
+                    <tr>
+                      <th class="sticky left-0 bg-base-200 z-10"></th>
+                      <th
+                        :for={_i <- 1..leaderboard_num_races(@leaderboard_rows)}
+                        class="text-center text-xs"
+                      >
+                        E
+                      </th>
+                      <th
+                        :for={_i <- 1..leaderboard_num_races(@leaderboard_rows)}
+                        class="text-center text-xs"
+                      >
+                        Pt
+                      </th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr :for={row <- @leaderboard_rows}>
+                      <td class="font-medium sticky left-0 bg-base-100 z-10">{row.username}</td>
+                      <%= for r <- row.races do %>
+                        <td class="text-center text-sm">{r.selection || "—"}</td>
+                        <td class="text-center text-sm">{r.points}</td>
+                      <% end %>
+                      <td class="text-center font-bold">{row.total_points}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          <% else %>
+            <section class="mb-4 p-4 rounded-lg bg-base-200 border border-base-300">
+              <p class="text-sm text-base-content/80">
+                Evento <strong>Horse vs Horse</strong> finalizado. Revisa el estado de tus apuestas
+                en <strong class="text-primary">Mis tickets</strong>.
+              </p>
+            </section>
+          <% end %>
           <div class="flex justify-end">
             <button phx-click="open_my_tickets" class="btn btn-outline btn-sm gap-1">
               <.icon name="hero-ticket" class="size-4" /> Mis tickets
@@ -515,8 +536,8 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
           </div>
         <% else %>
           <div>
-            <%!-- Game tabs --%>
-            <div role="tablist" class="tabs tabs-bordered mb-2">
+            <%!-- Pestañas: solo si el evento es Polla (puede incluir VS si hay matchups) --%>
+            <div :if={@event.game_type.code == :polla} role="tablist" class="tabs tabs-bordered mb-2">
               <button
                 role="tab"
                 class={[
@@ -543,7 +564,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
             </div>
 
             <%!-- ══ POLLA TAB ══ --%>
-            <div :if={@selected_tab == :polla}>
+            <div :if={@event.game_type.code == :polla and @selected_tab == :polla}>
               <%!-- Info strip --%>
               <div class="flex flex-wrap gap-3 mb-2 text-xs text-base-content/60">
                 <span>
@@ -643,8 +664,47 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
               </div>
             </div>
 
-            <%!-- ══ HVH TAB ══ --%>
-            <div :if={@selected_tab == :hvh}>
+            <%!-- ══ HVH TAB (o pantalla única si el evento es solo VS) ══ --%>
+            <div :if={
+              (@event.game_type.code == :polla and @selected_tab == :hvh) or
+                @event.game_type.code == :horse_vs_horse
+            }>
+              <div
+                :if={@event.game_type.code == :horse_vs_horse}
+                class="flex justify-end mb-3"
+              >
+                <button
+                  phx-click="open_my_tickets"
+                  class={[
+                    "btn btn-sm gap-2 shadow-sm transition-all duration-200",
+                    if(length(@my_polla_tickets) + length(@my_hvh_bets) > 0,
+                      do: "btn-primary hover:shadow-md",
+                      else: "btn-outline hover:bg-base-200"
+                    )
+                  ]}
+                >
+                  <.icon name="hero-ticket" class="size-5" />
+                  <span>Mis tickets</span>
+                  <span
+                    :if={length(@my_polla_tickets) + length(@my_hvh_bets) > 0}
+                    class="badge badge-sm badge-primary border-0 min-w-[1.25rem]"
+                  >
+                    {length(@my_polla_tickets) + length(@my_hvh_bets)}
+                  </span>
+                </button>
+              </div>
+
+              <div
+                :if={@event.game_type.code == :horse_vs_horse and @matchups == []}
+                class="alert alert-warning mb-4"
+              >
+                <.icon name="hero-information-circle" class="size-5" />
+                <span>
+                  Aún no hay enfrentamientos Macho vs Hembra configurados para este evento.
+                  Cuando el administrador los cree, aparecerán aquí.
+                </span>
+              </div>
+
               <div class="grid gap-4">
                 <div
                   :for={matchup <- @matchups}
@@ -653,7 +713,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                   <div class="card-body p-4">
                     <div class="flex items-center justify-between mb-3">
                       <h3 class="font-bold text-sm text-base-content/70">
-                        {matchup.race.distance_raw || "—"}
+                        {hvh_race_distance(matchup)}
                       </h3>
                       <span class={hvh_status_badge(matchup.status)}>
                         {hvh_status_label(matchup.status)}
@@ -763,7 +823,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
 
           <%!-- Bottom bar (solo Polla) --%>
           <div
-            :if={@selected_tab == :polla}
+            :if={@event.game_type.code == :polla and @selected_tab == :polla}
             class="fixed bottom-0 left-0 right-0 bg-base-100 border-t border-base-200 shadow-2xl z-10"
           >
             <div class="max-w-3xl mx-auto flex items-center justify-between gap-3 p-4">
@@ -994,7 +1054,7 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
                 <div class="card-body p-3">
                   <div class="flex items-center justify-between mb-1">
                     <span class="text-xs text-base-content/50">
-                      {bet.hvh_matchup.race.distance_raw || "—"}
+                      {hvh_race_distance(bet.hvh_matchup)}
                     </span>
                     <span class={hvh_bet_badge(bet.status)}>
                       {hvh_bet_label(bet.status)}
@@ -1159,6 +1219,16 @@ defmodule BetPlaceWeb.Bettor.GameEventShowLive do
   defp hvh_amount(hvh_selections, matchup_id) do
     hvh_selections |> Map.get(to_string(matchup_id), %{}) |> Map.get(:amount, "")
   end
+
+  defp hvh_race_distance(%{race: race}) do
+    cond do
+      match?(%Ecto.Association.NotLoaded{}, race) -> "—"
+      is_nil(race) -> "—"
+      true -> race.distance_raw || "—"
+    end
+  end
+
+  defp hvh_race_distance(_), do: "—"
 
   defp hvh_status_badge(:open), do: "badge badge-success badge-sm"
   defp hvh_status_badge(:closed), do: "badge badge-warning badge-sm"
